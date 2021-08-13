@@ -102,7 +102,13 @@ public final class FabricLoaderImpl extends net.fabricmc.loader.FabricLoader {
 	private Path gameDir;
 	private Path configDir;
 
+	private ModDiscoverer discoverer;
+
 	private FabricLoaderImpl() { }
+
+	boolean isFrozen() {
+		return frozen;
+	}
 
 	/**
 	 * Freeze the FabricLoader, preventing additional mods from being loaded.
@@ -113,6 +119,7 @@ public final class FabricLoaderImpl extends net.fabricmc.loader.FabricLoader {
 		}
 
 		frozen = true;
+		discoverer = null;
 		finishModLoading();
 	}
 
@@ -185,6 +192,10 @@ public final class FabricLoaderImpl extends net.fabricmc.loader.FabricLoader {
 		return getConfigDir().toFile();
 	}
 
+	ModDiscoverer getDiscoverer() {
+		return discoverer;
+	}
+
 	public void load() {
 		if (provider == null) throw new IllegalStateException("game provider not set");
 		if (frozen) throw new IllegalStateException("Frozen - cannot load additional mods!");
@@ -207,7 +218,7 @@ public final class FabricLoaderImpl extends net.fabricmc.loader.FabricLoader {
 
 		// discover mods
 
-		ModDiscoverer discoverer = new ModDiscoverer(versionOverrides, depOverrides);
+		discoverer = new ModDiscoverer(versionOverrides, depOverrides);
 		discoverer.addCandidateFinder(new ClasspathModCandidateFinder());
 		discoverer.addCandidateFinder(new DirectoryModCandidateFinder(getModsDirectory0(), remapRegularMods));
 		discoverer.addCandidateFinder(new ArgumentModCandidateFinder(remapRegularMods));
@@ -417,9 +428,9 @@ public final class FabricLoaderImpl extends net.fabricmc.loader.FabricLoader {
 			final String targetNamespace = FabricLauncherBase.getLauncher().getTargetNamespace();
 
 			mappingResolver = new LazyMappingResolver(() -> new MappingResolverImpl(
-				FabricLauncherBase.getLauncher().getMappingConfiguration().getMappings(),
-				targetNamespace
-			), targetNamespace);
+					FabricLauncherBase.getLauncher().getMappingConfiguration().getMappings(),
+					targetNamespace
+					), targetNamespace);
 		}
 
 		return mappingResolver;
