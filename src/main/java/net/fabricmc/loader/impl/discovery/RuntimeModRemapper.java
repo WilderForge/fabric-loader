@@ -24,7 +24,6 @@ import java.nio.file.FileSystem;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
-import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.Collections;
@@ -65,8 +64,8 @@ public final class RuntimeModRemapper {
 	private static final String REMAP_TYPE_STATIC = "static";
 	private static final String SOURCE_NAMESPACE = "intermediary";
 
-	public static void remap(Collection<ModCandidateImpl> modCandidates, Path tmpDir, Path outputDir) {
-		List<ModCandidateImpl> modsToRemap = new ArrayList<>();
+	public static void remap(Collection<ModCandidateImpl> modCandidates, Collection<ModCandidateImpl> cpMods, Path tmpDir, Path outputDir) {
+		Set<ModCandidateImpl> modsToRemap = new HashSet<>();
 		Set<InputTag> remapMixins = new HashSet<>();
 
 		for (ModCandidateImpl mod : modCandidates) {
@@ -87,7 +86,7 @@ public final class RuntimeModRemapper {
 			AccessWidener mergedAccessWidener = new AccessWidener();
 			mergedAccessWidener.visitHeader(SOURCE_NAMESPACE);
 
-			for (ModCandidateImpl mod : modsToRemap) {
+			for (ModCandidateImpl mod : cpMods) {
 				RemapInfo info = new RemapInfo();
 				infoMap.put(mod, info);
 
@@ -100,9 +99,6 @@ public final class RuntimeModRemapper {
 					info.inputPath = mod.copyToDir(tmpDir, true);
 					info.inputIsTemp = true;
 				}
-
-				info.outputPath = outputDir.resolve(mod.getDefaultFileName());
-				Files.deleteIfExists(info.outputPath);
 
 				String accessWidener = mod.getMetadata().getAccessWidener();
 
@@ -135,17 +131,24 @@ public final class RuntimeModRemapper {
 				throw new RuntimeException("Failed to populate remap classpath", e);
 			}
 
-			for (ModCandidateImpl mod : modsToRemap) {
+			for (ModCandidateImpl mod : cpMods) {
 				RemapInfo info = infoMap.get(mod);
 
-				InputTag tag = remapper.createInputTag();
-				info.tag = tag;
+				if (modsToRemap.contains(mod)) {
+					InputTag tag = remapper.createInputTag();
+					info.tag = tag;
 
-				if (requiresMixinRemap(info.inputPath)) {
-					remapMixins.add(tag);
+					if (requiresMixinRemap(info.inputPath)) {
+						remapMixins.add(tag);
+					}
+
+					info.outputPath = outputDir.resolve(mod.getDefaultFileName());
+					Files.deleteIfExists(info.outputPath);
+
+					remapper.readInputsAsync(tag, info.inputPath);
+				} else {
+					remapper.readClassPathAsync(info.inputPath);
 				}
-
-				remapper.readInputsAsync(tag, info.inputPath);
 			}
 
 			//Done in a 2nd loop as we need to make sure all the inputs are present before remapping
@@ -172,7 +175,7 @@ public final class RuntimeModRemapper {
 				RemapInfo info = infoMap.get(mod);
 
 				if (info.accessWidener != null) {
-					info.accessWidener = remapAccessWidener(info.accessWidener, remapper.getRemapper(), launcher.getTargetNamespace());
+					info.accessWidener = remapAccessWidener(info.accessWidener, remapper.getEnvironment().getRemapper(), launcher.getTargetNamespace());
 				}
 			}
 
