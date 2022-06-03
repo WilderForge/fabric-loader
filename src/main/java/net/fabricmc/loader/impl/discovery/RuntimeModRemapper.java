@@ -21,6 +21,7 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.net.URISyntaxException;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.FileSystem;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
@@ -88,8 +89,9 @@ public final class RuntimeModRemapper {
 		try {
 			FabricLauncher launcher = FabricLauncherBase.getLauncher();
 
-			AccessWidener mergedAccessWidener = new AccessWidener();
-			mergedAccessWidener.visitHeader(modNs);
+			AccessWidener mergedClassTweaker = new AccessWidener();
+			mergedClassTweaker.visitHeader(modNs);
+			AccessWidenerReader ctReader = new AccessWidenerReader(mergedClassTweaker);
 
 			for (ModCandidateImpl mod : cpMods) {
 				RemapInfo info = new RemapInfo();
@@ -102,31 +104,56 @@ public final class RuntimeModRemapper {
 					info.inputIsTemp = true;
 				}
 
-				String accessWidener = mod.getMetadata().getAccessWidener();
+				Collection<String> classTweakers = mod.getMetadata().getClassTweakers();
 
-				if (accessWidener != null) {
-					info.accessWidenerPath = accessWidener;
-					boolean found = false;
+				if (classTweakers != null && !classTweakers.isEmpty()) {
+					info.classTweakers = new ArrayList<>(classTweakers.size());
+
+					for (String path : classTweakers) {
+						info.classTweakers.add(new ClassTweakerInfo(path));
+					}
+
+					int remaining = classTweakers.size();
 
 					for (Path inputPath : info.inputPaths) {
 						try (FileSystemUtil.FileSystemDelegate jarFs = FileSystemUtil.getJarFileSystem(inputPath, false)) {
-							Path awPath = jarFs.get().getPath(accessWidener);
+							FileSystem fs = jarFs.get();
 
-							if (Files.exists(awPath)) {
-								info.accessWidener = Files.readAllBytes(awPath);
-								found = true;
-								break;
+							for (ClassTweakerInfo ct : info.classTweakers) {
+								if (ct.data != null) continue;
+
+								Path ctPath = fs.getPath(ct.path);
+
+								if (Files.exists(ctPath)) {
+									ct.data = Files.readAllBytes(ctPath);
+									remaining--;
+									if (remaining == 0) break;
+								}
 							}
+
+							if (remaining == 0) break;
 						} catch (Throwable t) {
-							throw new RuntimeException("Error reading access widener for mod '" +mod.getId()+ "'!", t);
+							throw new RuntimeException("Error reading class tweakers for mod " +mod.getId()+ " from "+inputPath, t);
 						}
 					}
 
-					if (!found) {
-						throw new RuntimeException("Missing access widener file "+accessWidener+" for mod " +mod.getId());
+					if (remaining > 0) {
+						List<String> missing = new ArrayList<>();
+
+						for (ClassTweakerInfo ct : info.classTweakers) {
+							if (ct.data == null) missing.add(ct.path);
+						}
+
+						throw new RuntimeException("Missing class tweaker files "+missing+" for mod " +mod.getId());
 					}
 
-					new AccessWidenerReader(mergedAccessWidener).read(info.accessWidener);
+					for (ClassTweakerInfo ct : info.classTweakers) {
+						try {
+							ctReader.read(ct.data);
+						} catch (Throwable t) {
+							throw new RuntimeException("Error reading class tweaker for mod " +mod.getId()+ " from "+ct.path, t);
+						}
+					}
 				}
 			}
 
@@ -135,7 +162,7 @@ public final class RuntimeModRemapper {
 					.renameInvalidLocals(false)
 					.extension(new MixinExtension(remapMixins::contains))
 					.extraAnalyzeVisitor((mrjVersion, className, next) ->
-					AccessWidenerClassVisitor.createClassVisitor(FabricLoaderImpl.ASM_VERSION, next, mergedAccessWidener)
+					AccessWidenerClassVisitor.createClassVisitor(FabricLoaderImpl.ASM_VERSION, next, mergedClassTweaker)
 							)
 					.build();
 
@@ -174,12 +201,12 @@ public final class RuntimeModRemapper {
 				List<ResourceRemapper> resourceRemappers = NonClassCopyMode.FIX_META_INF.remappers;
 
 				// aw remapping
-				if (info.accessWidenerPath != null) {
-					ResourceRemapper awRemapper = createAccessWidenerRemapper(info, modNs, runtimeNs);
+				if (info.classTweakers != null) {
+					ResourceRemapper ctRemapper = createClassTweakerRemapper(info, modNs, runtimeNs);
 
-					if (awRemapper != null) {
+					if (ctRemapper != null) {
 						resourceRemappers = new ArrayList<>(resourceRemappers);
-						resourceRemappers.add(awRemapper);
+						resourceRemappers.add(ctRemapper);
 					}
 				}
 
@@ -241,23 +268,34 @@ public final class RuntimeModRemapper {
 		}
 	}
 
-	private static ResourceRemapper createAccessWidenerRemapper(RemapInfo remapInfo, String modNs, String runtimeNs) {
+	private static ResourceRemapper createClassTweakerRemapper(RemapInfo remapInfo, String modNs, String runtimeNs) {
 		return new ResourceRemapper() {
 			@Override
 			public boolean canTransform(TinyRemapper remapper, Path relativePath) {
-				return relativePath.toString().equals(remapInfo.accessWidenerPath);
+				return findClassTweaker(remapInfo, relativePath.toString()) != null;
 			}
 
 			@Override
 			public void transform(Path destinationDirectory, Path relativePath, InputStream input, TinyRemapper remapper) throws IOException {
+				ClassTweakerInfo ct = findClassTweaker(remapInfo, relativePath.toString());
+				assert ct != null; // shouldn't happen due to canTransform
+
 				AccessWidenerWriter writer = new AccessWidenerWriter();
 				AccessWidenerRemapper remappingDecorator = new AccessWidenerRemapper(writer, remapper.getEnvironment().getRemapper(), modNs, runtimeNs);
-				AccessWidenerReader accessWidenerReader = new AccessWidenerReader(remappingDecorator);
-				accessWidenerReader.read(remapInfo.accessWidener, modNs);
+				AccessWidenerReader reader = new AccessWidenerReader(remappingDecorator);
+				reader.read(ct.data, modNs);
 
 				Files.write(destinationDirectory.resolve(relativePath.toString()), writer.write());
 			}
 		};
+	}
+
+	private static ClassTweakerInfo findClassTweaker(RemapInfo remapInfo, String path) {
+		for (ClassTweakerInfo ct : remapInfo.classTweakers) {
+			if (ct.path.equals(path)) return ct;
+		}
+
+		return null;
 	}
 
 	private static List<Path> getRemapClasspath() throws IOException {
@@ -289,12 +327,20 @@ public final class RuntimeModRemapper {
 		return false;
 	}
 
-	private static class RemapInfo {
+	private static final class RemapInfo {
 		InputTag tag;
 		List<Path> inputPaths;
 		Path outputPath;
 		boolean inputIsTemp;
-		String accessWidenerPath;
-		byte[] accessWidener;
+		Collection<ClassTweakerInfo> classTweakers;
+	}
+
+	private static final class ClassTweakerInfo {
+		final String path;
+		byte[] data;
+
+		ClassTweakerInfo(String path) {
+			this.path = path;
+		}
 	}
 }
