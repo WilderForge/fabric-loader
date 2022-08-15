@@ -43,11 +43,13 @@ import net.fabricmc.accesswidener.AccessWidenerClassVisitor;
 import net.fabricmc.accesswidener.AccessWidenerReader;
 import net.fabricmc.accesswidener.AccessWidenerRemapper;
 import net.fabricmc.accesswidener.AccessWidenerWriter;
+import net.fabricmc.api.EnvType;
 import net.fabricmc.loader.impl.FabricLoaderImpl;
 import net.fabricmc.loader.impl.FormattedException;
 import net.fabricmc.loader.impl.launch.FabricLauncher;
 import net.fabricmc.loader.impl.launch.FabricLauncherBase;
 import net.fabricmc.loader.impl.launch.MappingConfiguration;
+import net.fabricmc.loader.impl.util.Expression.DynamicFunction;
 import net.fabricmc.loader.impl.util.FileSystemUtil;
 import net.fabricmc.loader.impl.util.ManifestUtil;
 import net.fabricmc.loader.impl.util.SystemProperties;
@@ -65,7 +67,8 @@ public final class RuntimeModRemapper {
 	private static final String REMAP_TYPE_MANIFEST_KEY = "Fabric-Loom-Mixin-Remap-Type";
 	private static final String REMAP_TYPE_STATIC = "static";
 
-	public static void remap(Collection<ModCandidateImpl> modCandidates, Collection<ModCandidateImpl> cpMods, Path tmpDir, Path outputDir) {
+	public static void remap(Collection<ModCandidateImpl> modCandidates, Collection<ModCandidateImpl> cpMods, Path tmpDir, Path outputDir,
+			EnvType env, Map<String, DynamicFunction> expressionFunctions) {
 		Set<ModCandidateImpl> modsToRemap = new HashSet<>();
 		Set<InputTag> remapMixins = new HashSet<>();
 
@@ -104,7 +107,7 @@ public final class RuntimeModRemapper {
 					info.inputIsTemp = true;
 				}
 
-				Collection<String> classTweakers = mod.getMetadata().getClassTweakers();
+				Collection<String> classTweakers = mod.getMetadata().getClassTweakers(env, expressionFunctions);
 
 				if (classTweakers != null && !classTweakers.isEmpty()) {
 					info.classTweakers = new ArrayList<>(classTweakers.size());
