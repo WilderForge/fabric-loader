@@ -20,6 +20,7 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.net.URL;
 import java.net.URLClassLoader;
+import java.nio.ByteBuffer;
 import java.security.CodeSource;
 import java.security.SecureClassLoader;
 import java.util.Enumeration;
@@ -156,8 +157,8 @@ final class KnotClassLoader extends SecureClassLoader implements ClassLoaderAcce
 	}
 
 	@Override
-	public Class<?> defineClassFwd(String name, byte[] b, int off, int len, CodeSource cs) {
-		return super.defineClass(name, b, off, len, cs);
+	public Class<?> defineClassFwd(String name, ByteBuffer data, CodeSource cs) {
+		return super.defineClass(name, data, cs);
 	}
 
 	@Override

@@ -19,6 +19,7 @@ package net.fabricmc.loader.impl.util;
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.net.URL;
+import java.nio.ByteBuffer;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Collections;
@@ -26,9 +27,19 @@ import java.util.List;
 import java.util.Locale;
 import java.util.stream.Collectors;
 
+import org.objectweb.asm.ClassReader;
+
 public final class LoaderUtil {
 	public static String getClassFileName(String className) {
-		return className.replace('.', '/').concat(".class");
+		return getSlashName(className).concat(".class");
+	}
+
+	public static String getSlashName(String dotName) {
+		return dotName.replace('.', '/');
+	}
+
+	public static String getDotName(String slashName) {
+		return slashName.replace('/', '.');
 	}
 
 	public static Path normalizePath(Path path) {
@@ -45,6 +56,24 @@ public final class LoaderUtil {
 		} catch (IOException e) {
 			throw new UncheckedIOException(e);
 		}
+	}
+
+	public static ClassReader deserializeClass(ByteBuffer input) {
+		int len = input.remaining();
+		byte[] bytes;
+		int offset;
+
+		if (input.hasArray()) {
+			bytes = input.array();
+			offset = input.arrayOffset() + input.position();
+		} else {
+			bytes = new byte[len];
+			input.get(bytes);
+			input.position(input.position() - len);
+			offset = 0;
+		}
+
+		return new ClassReader(bytes, offset, len);
 	}
 
 	public static void verifyNotInTargetCl(Class<?> cls) {
