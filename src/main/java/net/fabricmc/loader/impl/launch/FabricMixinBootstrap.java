@@ -27,6 +27,7 @@ import org.spongepowered.asm.mixin.FabricUtil;
 import org.spongepowered.asm.mixin.MixinEnvironment;
 import org.spongepowered.asm.mixin.Mixins;
 import org.spongepowered.asm.mixin.extensibility.IMixinConfig;
+import org.spongepowered.asm.mixin.extensibility.IMixinConfigSource;
 import org.spongepowered.asm.mixin.transformer.Config;
 
 import net.fabricmc.api.EnvType;
@@ -91,7 +92,7 @@ public final class FabricMixinBootstrap {
 				if (prev != null) throw new RuntimeException(String.format("Non-unique Mixin config name %s used by the mods %s and %s", config, prev.getMetadata().getId(), mod.getMetadata().getId()));
 
 				try {
-					Mixins.addConfiguration(config);
+					Mixins.addConfiguration(config, (IMixinConfigSource) null);
 				} catch (Throwable t) {
 					throw new RuntimeException(String.format("Error creating Mixin config %s for mod %s", config, mod.getMetadata().getId()), t);
 				}
