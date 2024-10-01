@@ -17,11 +17,17 @@
 package net.fabricmc.loader.impl.game;
 
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
 import java.util.Objects;
 
+import net.fabricmc.loader.FabricLoader;
+import net.fabricmc.loader.api.discovery.ModCandidateFinder;
 import net.fabricmc.loader.api.metadata.ModMetadata;
+import net.fabricmc.loader.impl.discovery.ArgumentModCandidateFinder;
+import net.fabricmc.loader.impl.discovery.ClasspathModCandidateFinder;
+import net.fabricmc.loader.impl.discovery.DirectoryModCandidateFinder;
 import net.fabricmc.loader.impl.game.patch.GameTransformer;
 import net.fabricmc.loader.impl.launch.FabricLauncher;
 import net.fabricmc.loader.impl.util.Arguments;
@@ -59,6 +65,14 @@ public interface GameProvider { // name directly referenced in net.fabricmc.load
 
 	default boolean hasAwtSupport() {
 		return LoaderUtil.hasAwtSupport();
+	}
+	
+	default Collection<ModCandidateFinder> getModFinders(boolean remap) {
+		List<ModCandidateFinder> finders = new ArrayList<>();
+		finders.add(new ClasspathModCandidateFinder());
+		finders.add(new DirectoryModCandidateFinder(FabricLoader.INSTANCE.getModsDirectory().toPath(), remap));
+		finders.add(new ArgumentModCandidateFinder(remap));
+		return finders;
 	}
 
 	class BuiltinMod {

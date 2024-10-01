@@ -34,6 +34,7 @@ import org.mockito.MockedConstruction;
 import org.mockito.Mockito;
 
 import net.fabricmc.api.EnvType;
+import net.fabricmc.loader.api.discovery.ModCandidateFinder;
 import net.fabricmc.loader.impl.FabricLoaderImpl;
 import net.fabricmc.loader.impl.game.GameProvider;
 import net.fabricmc.loader.impl.launch.FabricLauncher;

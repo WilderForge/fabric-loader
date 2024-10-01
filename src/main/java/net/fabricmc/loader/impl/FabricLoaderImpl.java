@@ -45,10 +45,8 @@ import net.fabricmc.loader.api.LanguageAdapter;
 import net.fabricmc.loader.api.MappingResolver;
 import net.fabricmc.loader.api.ModContainer;
 import net.fabricmc.loader.api.ObjectShare;
+import net.fabricmc.loader.api.discovery.ModCandidateFinder;
 import net.fabricmc.loader.api.entrypoint.EntrypointContainer;
-import net.fabricmc.loader.impl.discovery.ArgumentModCandidateFinder;
-import net.fabricmc.loader.impl.discovery.ClasspathModCandidateFinder;
-import net.fabricmc.loader.impl.discovery.DirectoryModCandidateFinder;
 import net.fabricmc.loader.impl.discovery.ModCandidateImpl;
 import net.fabricmc.loader.impl.discovery.ModDiscoverer;
 import net.fabricmc.loader.impl.discovery.ModResolutionException;
@@ -208,9 +206,9 @@ public final class FabricLoaderImpl extends net.fabricmc.loader.FabricLoader {
 		// discover mods
 
 		ModDiscoverer discoverer = new ModDiscoverer(versionOverrides, depOverrides);
-		discoverer.addCandidateFinder(new ClasspathModCandidateFinder());
-		discoverer.addCandidateFinder(new DirectoryModCandidateFinder(getModsDirectory0(), remapRegularMods));
-		discoverer.addCandidateFinder(new ArgumentModCandidateFinder(remapRegularMods));
+		for(ModCandidateFinder finder : provider.getModFinders(remapRegularMods)) {
+			discoverer.addCandidateFinder(finder);
+		}
 
 		Map<String, Set<ModCandidateImpl>> envDisabledMods = new HashMap<>();
 		modCandidates = discoverer.discoverMods(this, envDisabledMods);
