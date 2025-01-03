@@ -26,6 +26,7 @@ import java.util.function.Consumer;
 import net.fabricmc.api.EnvType;
 import net.fabricmc.loader.api.entrypoint.EntrypointContainer;
 import net.fabricmc.loader.impl.FabricLoaderImpl;
+import net.fabricmc.loader.impl.util.version.VersionParser;
 
 /**
  * The public-facing FabricLoader instance.
@@ -236,4 +237,6 @@ public interface FabricLoader {
 	 * @return the launch arguments for the game
 	 */
 	String[] getLaunchArguments(boolean sanitize);
+	
+	VersionParser getVersionParser();
 }

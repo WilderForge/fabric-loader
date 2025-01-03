@@ -26,6 +26,7 @@ import java.util.Map;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
+import net.fabricmc.loader.api.FabricLoader;
 import net.fabricmc.loader.api.Version;
 import net.fabricmc.loader.api.VersionParsingException;
 import net.fabricmc.loader.api.metadata.ContactInformation;
@@ -34,7 +35,6 @@ import net.fabricmc.loader.api.metadata.ModEnvironment;
 import net.fabricmc.loader.api.metadata.Person;
 import net.fabricmc.loader.impl.lib.gson.JsonReader;
 import net.fabricmc.loader.impl.lib.gson.JsonToken;
-import net.fabricmc.loader.impl.util.version.VersionParser;
 
 final class V0ModMetadataParser {
 	private static final Pattern WEBSITE_PATTERN = Pattern.compile("\\((.+)\\)");
@@ -94,7 +94,7 @@ final class V0ModMetadataParser {
 				final String rawVersion = reader.nextString();
 
 				try {
-					version = VersionParser.parse(rawVersion, false);
+					version = FabricLoader.getInstance().getVersionParser().parse(rawVersion, false);
 				} catch (VersionParsingException e) {
 					throw new ParseMetadataException(String.format("Failed to parse version: %s", rawVersion), e);
 				}

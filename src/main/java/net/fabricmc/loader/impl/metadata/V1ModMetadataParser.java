@@ -26,6 +26,7 @@ import java.util.Map;
 import java.util.SortedMap;
 import java.util.TreeMap;
 
+import net.fabricmc.loader.api.FabricLoader;
 import net.fabricmc.loader.api.Version;
 import net.fabricmc.loader.api.VersionParsingException;
 import net.fabricmc.loader.api.metadata.ContactInformation;
@@ -35,7 +36,6 @@ import net.fabricmc.loader.api.metadata.ModEnvironment;
 import net.fabricmc.loader.api.metadata.Person;
 import net.fabricmc.loader.impl.lib.gson.JsonReader;
 import net.fabricmc.loader.impl.lib.gson.JsonToken;
-import net.fabricmc.loader.impl.util.version.VersionParser;
 
 final class V1ModMetadataParser {
 	/**
@@ -115,7 +115,7 @@ final class V1ModMetadataParser {
 				}
 
 				try {
-					version = VersionParser.parse(reader.nextString(), false);
+					version = FabricLoader.getInstance().getVersionParser().parse(reader.nextString(), false);
 				} catch (VersionParsingException e) {
 					throw new ParseMetadataException("Failed to parse version", e);
 				}

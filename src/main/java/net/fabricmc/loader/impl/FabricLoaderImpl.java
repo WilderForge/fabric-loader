@@ -68,6 +68,7 @@ import net.fabricmc.loader.impl.util.LoaderUtil;
 import net.fabricmc.loader.impl.util.SystemProperties;
 import net.fabricmc.loader.impl.util.log.Log;
 import net.fabricmc.loader.impl.util.log.LogCategory;
+import net.fabricmc.loader.impl.util.version.VersionParser;
 
 @SuppressWarnings("deprecation")
 public final class FabricLoaderImpl extends net.fabricmc.loader.FabricLoader {
@@ -128,7 +129,9 @@ public final class FabricLoaderImpl extends net.fabricmc.loader.FabricLoader {
 
 	public void setGameProvider(GameProvider provider) {
 		this.provider = provider;
-
+		if(getVersionParser() != VersionParser.DEFAULT) {
+			Log.warn(LogCategory.GAME_PROVIDER, "Note: Custom version parser defined by game provider: " + getVersionParser().getClass().getCanonicalName());
+		}
 		setGameDir(provider.getLaunchDirectory());
 	}
 
@@ -616,6 +619,14 @@ public final class FabricLoaderImpl extends net.fabricmc.loader.FabricLoader {
 
 		return directory != null ? Paths.get(directory) : gameDir.resolve("mods");
 	}
+	
+	@Override
+	public VersionParser getVersionParser() {
+		if(provider == null) {
+			return VersionParser.DEFAULT;
+		}
+		return getGameProvider().getVersionParser();
+	}
 
 	/**
 	 * Provides singleton for static init assignment regardless of load order.
@@ -633,4 +644,5 @@ public final class FabricLoaderImpl extends net.fabricmc.loader.FabricLoader {
 	static {
 		LoaderUtil.verifyNotInTargetCl(FabricLoaderImpl.class);
 	}
+
 }

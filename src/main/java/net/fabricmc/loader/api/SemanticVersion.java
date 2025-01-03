@@ -102,6 +102,6 @@ public interface SemanticVersion extends Version {
 	 * @throws VersionParsingException if a problem arises during version parsing
 	 */
 	static SemanticVersion parse(String s) throws VersionParsingException {
-		return VersionParser.parseSemantic(s);
+		return VersionParser.DEFAULT.parseSemantic(s);
 	}
 }

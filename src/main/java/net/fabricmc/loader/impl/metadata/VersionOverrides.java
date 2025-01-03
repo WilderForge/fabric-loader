@@ -20,10 +20,10 @@ import java.util.Collection;
 import java.util.HashMap;
 import java.util.Map;
 
+import net.fabricmc.loader.api.FabricLoader;
 import net.fabricmc.loader.api.Version;
 import net.fabricmc.loader.api.VersionParsingException;
 import net.fabricmc.loader.impl.util.SystemProperties;
-import net.fabricmc.loader.impl.util.version.VersionParser;
 
 public final class VersionOverrides {
 	private final Map<String, Version> replacements = new HashMap<>();
@@ -41,7 +41,7 @@ public final class VersionOverrides {
 			Version version;
 
 			try {
-				version = VersionParser.parse(rawVersion, false);
+				version = FabricLoader.getInstance().getVersionParser().parse(rawVersion, false);
 			} catch (VersionParsingException e) {
 				throw new RuntimeException(String.format("Invalid replacement version for mod %s: %s", id, rawVersion), e);
 			}

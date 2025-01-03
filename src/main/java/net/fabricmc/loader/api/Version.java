@@ -38,6 +38,6 @@ public interface Version extends Comparable<Version> {
 	 * @throws VersionParsingException if a problem arises during version parsing
 	 */
 	static Version parse(String string) throws VersionParsingException {
-		return VersionParser.parse(string, false);
+		return VersionParser.DEFAULT.parse(string, false);
 	}
 }

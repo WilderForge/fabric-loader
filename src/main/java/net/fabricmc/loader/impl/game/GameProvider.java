@@ -26,6 +26,7 @@ import net.fabricmc.loader.impl.game.patch.GameTransformer;
 import net.fabricmc.loader.impl.launch.FabricLauncher;
 import net.fabricmc.loader.impl.util.Arguments;
 import net.fabricmc.loader.impl.util.LoaderUtil;
+import net.fabricmc.loader.impl.util.version.VersionParser;
 
 public interface GameProvider { // name directly referenced in net.fabricmc.loader.impl.launch.knot.Knot.findEmbedddedGameProvider() and service loader records
 	String getGameId();
@@ -52,6 +53,10 @@ public interface GameProvider { // name directly referenced in net.fabricmc.load
 
 	Arguments getArguments();
 	String[] getLaunchArguments(boolean sanitize);
+	
+	default VersionParser getVersionParser() {
+		return VersionParser.DEFAULT;
+	}
 
 	default boolean canOpenErrorGui() {
 		return true;

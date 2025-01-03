@@ -20,8 +20,11 @@ import net.fabricmc.loader.api.SemanticVersion;
 import net.fabricmc.loader.api.Version;
 import net.fabricmc.loader.api.VersionParsingException;
 
-public final class VersionParser {
-	public static Version parse(String s, boolean storeX) throws VersionParsingException {
+public interface VersionParser {
+	
+	public static final VersionParser DEFAULT = new VersionParser(){};
+	
+	public default Version parse(String s, boolean storeX) throws VersionParsingException {
 		if (s == null || s.isEmpty()) {
 			throw new VersionParsingException("Version must be a non-empty string!");
 		}
@@ -37,7 +40,7 @@ public final class VersionParser {
 		return version;
 	}
 
-	public static SemanticVersion parseSemantic(String s) throws VersionParsingException {
+	public default SemanticVersion parseSemantic(String s) throws VersionParsingException {
 		if (s == null || s.isEmpty()) {
 			throw new VersionParsingException("Version must be a non-empty string!");
 		}

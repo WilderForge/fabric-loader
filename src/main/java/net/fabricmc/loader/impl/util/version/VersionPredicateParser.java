@@ -24,6 +24,7 @@ import java.util.List;
 import java.util.Objects;
 import java.util.Set;
 
+import net.fabricmc.loader.api.FabricLoader;
 import net.fabricmc.loader.api.SemanticVersion;
 import net.fabricmc.loader.api.Version;
 import net.fabricmc.loader.api.VersionParsingException;
@@ -55,7 +56,7 @@ public final class VersionPredicateParser {
 				}
 			}
 
-			Version version = VersionParser.parse(s, true);
+			Version version = FabricLoader.getInstance().getVersionParser().parse(s, true);
 
 			if (version instanceof SemanticVersion) {
 				SemanticVersion semVer = (SemanticVersion) version;
