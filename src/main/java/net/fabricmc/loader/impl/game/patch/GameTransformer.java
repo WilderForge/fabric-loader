@@ -28,6 +28,7 @@ import java.util.zip.ZipError;
 
 import org.objectweb.asm.ClassReader;
 import org.objectweb.asm.ClassWriter;
+import org.objectweb.asm.Type;
 import org.objectweb.asm.tree.ClassNode;
 
 import net.fabricmc.loader.impl.launch.FabricLauncher;
@@ -39,12 +40,18 @@ import net.fabricmc.loader.impl.util.log.Log;
 import net.fabricmc.loader.impl.util.log.LogCategory;
 
 public class GameTransformer {
-	private final List<GamePatch> patches;
+	private final List<StaticPatch> patches;
+	private final List<DynamicPatch> dynamicPatches;
 	private Map<String, byte[]> patchedClasses;
 	private boolean entrypointsLocated = false;
 
-	public GameTransformer(GamePatch... patches) {
-		this.patches = Arrays.asList(patches);
+	public GameTransformer(StaticPatch... patches) {
+		this(patches, new DynamicPatch[]{});
+	}
+	
+	public GameTransformer(StaticPatch[] staticPatches, DynamicPatch[] dynamicPatches) {
+		this.patches = Arrays.asList(staticPatches);
+		this.dynamicPatches = Arrays.asList(dynamicPatches);
 	}
 
 	private void addPatchedClass(ClassNode node) {
@@ -78,7 +85,7 @@ public class GameTransformer {
 				return readClassNode(cp, name);
 			};
 
-			for (GamePatch patch : patches) {
+			for (StaticPatch patch : patches) {
 				patch.process(launcher, classSource, classNode -> patchedClassNodes.put(classNode.name, classNode));
 			}
 
@@ -123,11 +130,20 @@ public class GameTransformer {
 		return patchedClasses.get(className);
 	}
 
-	private static ClassNode readClass(ClassReader reader) {
+	private ClassNode readClass(ClassReader reader) {
 		if (reader == null) return null;
 
 		ClassNode node = new ClassNode();
 		reader.accept(node, 0);
+		
+		for(DynamicPatch patch : dynamicPatches) {
+			Type type = Type.getType(node.name);
+			if(patch.handlesClass(node, type)) {
+				Log.info(LogCategory.GAME_PATCH, "");
+				patch.processClass(node, type);
+			}
+		}
+		
 		return node;
 	}
 }
