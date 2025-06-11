@@ -63,7 +63,7 @@ public class GetNonFabricModsTest {
 
 		loaderConstruction = Mockito.mockConstructionWithAnswer(FabricLoaderImpl.class, invocation -> loader);
 
-		discoverer = new ModDiscoverer(mock(), mock());
+		discoverer = new ModDiscoverer(provider, loader.isDevelopmentEnvironment(), loader.getEnvironmentType(), mock(), mock());
 		discoverer.addCandidateFinder(new MockCandidateFinder());
 	}
 
@@ -77,7 +77,7 @@ public class GetNonFabricModsTest {
 	 */
 	@Test
 	public void testGetNonFabricMods() throws ModResolutionException {
-		List<ModCandidateImpl> acceptedMods = discoverer.discoverMods(loader, new HashMap<String, Set<ModCandidateImpl>>());
+		List<ModCandidateImpl> acceptedMods = discoverer.discoverMods(new HashMap<String, Set<ModCandidateImpl>>());
 
 		boolean foundDummyFabricMod = false;
 
