@@ -367,6 +367,8 @@ remoteSign {
 	}
 }
 
+ext.mavenLocalUrl = repositories.mavenLocal().url.toString()
+
 publishing {
 	publications {
 		mavenJava(MavenPublication) {
@@ -388,17 +390,11 @@ publishing {
 	}
 
 	// select the repositories you want to publish to
-	repositories {
-		if (ENV.MAVEN_URL) {
-			maven {
-				url ENV.MAVEN_URL
-				credentials {
-					username ENV.MAVEN_USERNAME
-					password ENV.MAVEN_PASSWORD
-				}
-			}
-		}
-	}
+    repositories {
+        maven {
+            url = uri(project.hasProperty('mavenRepoUrl') ? project.mavenRepoUrl : mavenLocalUrl) // Default to mavenLocal if no custom URL is provided
+        }
+    }
 }
 
 def getBranch() {
