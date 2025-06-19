@@ -90,11 +90,13 @@ public final class ModDiscoverer {
 		candidateFinders.add(f);
 	}
 
-	public List<ModCandidateImpl> discoverMods(Map<String, Set<ModCandidateImpl>> envDisabledModsOut) throws ModResolutionException {
+	public ModDiscoveryInfo discoverMods(Map<String, Set<ModCandidateImpl>> envDisabledModsOut) throws ModResolutionException {
 		long startTime = System.nanoTime();
 		ForkJoinPool pool = new ForkJoinPool();
 		Set<Path> processedPaths = new HashSet<>(); // suppresses duplicate paths
 		List<Future<ModCandidateImpl>> futures = new ArrayList<>();
+		List<Exception> exceptions = new ArrayList<>();
+		
 
 		ModCandidateConsumer taskSubmitter = (paths, requiresRemap) -> {
 			List<Path> pendingPaths = new ArrayList<>(paths.size());
@@ -183,10 +185,6 @@ public final class ModDiscoverer {
 			throw new FormattedException("Mod discovery interrupted!", e);
 		}
 
-		if (exception != null) {
-			throw exception;
-		}
-
 		// get optional set of disabled mod ids
 		Set<String> disabledModIds = findDisabledModIds();
 
@@ -219,7 +217,7 @@ public final class ModDiscoverer {
 
 		Log.debug(LogCategory.DISCOVERY, "Mod discovery time: %.1f ms", (endTime - startTime) * 1e-6);
 
-		return new ArrayList<>(ret);
+		return new ModDiscoveryInfo(new ArrayList<>(ret), exception);
 	}
 
 	public List<Path> getNonFabricMods() {
