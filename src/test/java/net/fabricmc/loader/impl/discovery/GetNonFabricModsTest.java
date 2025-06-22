@@ -79,8 +79,8 @@ public class GetNonFabricModsTest {
 	public void testGetNonFabricMods() throws ModResolutionException {
 		ModDiscoveryInfo discoveryInfo = discoverer.discoverMods(new HashMap<String, Set<ModCandidateImpl>>());
 		List<ModCandidateImpl> acceptedMods = discoveryInfo.getFoundMods();
-		
-		if(!discoveryInfo.launchable()) {
+
+		if (!discoveryInfo.launchable()) {
 			throw discoveryInfo.getException();
 		}
 

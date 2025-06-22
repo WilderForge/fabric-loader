@@ -96,7 +96,6 @@ public final class ModDiscoverer {
 		Set<Path> processedPaths = new HashSet<>(); // suppresses duplicate paths
 		List<Future<ModCandidateImpl>> futures = new ArrayList<>();
 		List<Exception> exceptions = new ArrayList<>();
-		
 
 		ModCandidateConsumer taskSubmitter = (paths, requiresRemap) -> {
 			List<Path> pendingPaths = new ArrayList<>(paths.size());
