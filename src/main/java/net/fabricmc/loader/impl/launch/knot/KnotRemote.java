@@ -21,6 +21,7 @@ import static net.fabricmc.loader.impl.util.SystemProperties.WEBSOCKET_CLIENT_ID
 import static net.fabricmc.loader.impl.util.SystemProperties.WEBSOCKET_PORT;
 import static net.fabricmc.loader.impl.util.SystemProperties.WEBSOCKET_TIMEOUT;
 
+import java.io.DataOutputStream;
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.net.InetSocketAddress;
@@ -31,7 +32,10 @@ import net.fabricmc.loader.impl.util.log.Log;
 import net.fabricmc.loader.impl.util.log.LogCategory;
 
 public class KnotRemote {
+	private static final int STREAM_SCHEMA = 1;
+	private static final int STREAM_VERSION = 1;
 	private static Socket socket;
+	private static DataOutputStream stream;
 	private static String id;
 
 	public static class Client {
@@ -48,6 +52,19 @@ public class KnotRemote {
 		}
 	}
 
+	public static boolean available() {
+		return socket != null && stream != null && socket.isConnected() && !socket.isClosed();
+	}
+
+	public static void send(byte[] data) throws IOException {
+		stream.write(0x1E);
+		stream.write(STREAM_SCHEMA);
+		stream.write(STREAM_VERSION);
+		stream.write('\n');
+		stream.write(data);
+		stream.flush();
+	}
+
 	private static void connect(String[] args) {
 		final String address = System.getProperty(WEBSOCKET_ADDRESS, "localhost");
 		Log.info(LogCategory.WEBSOCKET, "Address: " + address);
@@ -58,7 +75,7 @@ public class KnotRemote {
 		id = System.getProperty(WEBSOCKET_CLIENT_ID);
 		Log.info(LogCategory.WEBSOCKET, "ID: " + id);
 
-		final int timeout = Integer.parseInt(System.getProperty(WEBSOCKET_TIMEOUT, "60")) * 10;
+		final int timeout = Integer.parseInt(System.getProperty(WEBSOCKET_TIMEOUT, "60")) * 1000;
 		Log.info(LogCategory.WEBSOCKET, "Timeout: " + timeout);
 		startWatchdog(timeout);
 
@@ -75,6 +92,7 @@ public class KnotRemote {
 
 		try {
 			socket.connect(socketAddress, timeout);
+			stream = new DataOutputStream(socket.getOutputStream());
 		} catch (IOException e) {
 			throw new UncheckedIOException("Failed to connect to " + connectionString, e);
 		}
@@ -83,18 +101,22 @@ public class KnotRemote {
 	}
 
 	private static void startWatchdog(int timeout) {
-		Thread watcher = new Thread(() -> {
-			Log.info(LogCategory.WEBSOCKET, "Watchdog started");
+		if (timeout > 0) {
+			Thread watcher = new Thread(() -> {
+				Log.info(LogCategory.WEBSOCKET, "Watchdog started");
 
-			try {
-				Thread.sleep(timeout);
-				Log.error(LogCategory.WEBSOCKET, "Launch timeout reached (" + timeout + "ms). Exiting JVM.");
-				System.exit(3);
-			} catch (InterruptedException ignored) {
-				//ignored
-			}
-		});
-		watcher.setDaemon(true);
-		watcher.start();
+				try {
+					Thread.sleep(timeout);
+					Log.error(LogCategory.WEBSOCKET, "Launch timeout reached (" + timeout + "ms). Exiting JVM.");
+					System.exit(3);
+				} catch (InterruptedException ignored) {
+					//ignored
+				}
+			});
+			watcher.setDaemon(true);
+			watcher.start();
+		} else {
+			Log.error(LogCategory.WEBSOCKET, "Unlimited time specified.");
+		}
 	}
 }

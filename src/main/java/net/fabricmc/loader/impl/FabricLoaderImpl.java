@@ -19,6 +19,7 @@ package net.fabricmc.loader.impl;
 import java.io.BufferedReader;
 import java.io.File;
 import java.io.IOException;
+import java.io.UncheckedIOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
@@ -51,13 +52,16 @@ import net.fabricmc.loader.impl.discovery.ClasspathModCandidateFinder;
 import net.fabricmc.loader.impl.discovery.DirectoryModCandidateFinder;
 import net.fabricmc.loader.impl.discovery.ModCandidateImpl;
 import net.fabricmc.loader.impl.discovery.ModDiscoverer;
+import net.fabricmc.loader.impl.discovery.ModDiscoveryInfo;
 import net.fabricmc.loader.impl.discovery.ModResolutionException;
+import net.fabricmc.loader.impl.discovery.ModResolutionInfo;
 import net.fabricmc.loader.impl.discovery.ModResolver;
 import net.fabricmc.loader.impl.discovery.RuntimeModRemapper;
 import net.fabricmc.loader.impl.entrypoint.EntrypointStorage;
 import net.fabricmc.loader.impl.game.GameProvider;
 import net.fabricmc.loader.impl.launch.FabricLauncherBase;
 import net.fabricmc.loader.impl.launch.knot.Knot;
+import net.fabricmc.loader.impl.launch.knot.KnotRemote;
 import net.fabricmc.loader.impl.metadata.DependencyOverrides;
 import net.fabricmc.loader.impl.metadata.EntrypointMetadata;
 import net.fabricmc.loader.impl.metadata.LoaderModMetadata;
@@ -213,7 +217,8 @@ public final class FabricLoaderImpl extends net.fabricmc.loader.FabricLoader {
 		discoverer.addCandidateFinder(new ArgumentModCandidateFinder(remapRegularMods));
 
 		Map<String, Set<ModCandidateImpl>> envDisabledMods = new HashMap<>();
-		modCandidates = discoverer.discoverMods(this, envDisabledMods);
+		ModDiscoveryInfo discoveryInfo = discoverer.discoverMods(this, envDisabledMods);
+		modCandidates = discoveryInfo.getFoundMods();
 
 		// dump version and dependency overrides info
 
@@ -225,9 +230,42 @@ public final class FabricLoaderImpl extends net.fabricmc.loader.FabricLoader {
 			Log.info(LogCategory.GENERAL, "Dependencies overridden for %s", String.join(", ", depOverrides.getAffectedModIds()));
 		}
 
+		final boolean remoteAvailable = KnotRemote.available();
+		Log.info(LogCategory.WEBSOCKET, "Remote: " + remoteAvailable);
+
+		if (remoteAvailable) {
+			try {
+				KnotRemote.send(discoveryInfo.serialize().getBytes());
+			} catch (IOException e) {
+				if (!discoveryInfo.launchable()) {
+					e.addSuppressed(discoveryInfo.getException());
+					throw new UncheckedIOException(e);
+				}
+			}
+		} else if (!discoveryInfo.launchable()) {
+			throw discoveryInfo.getException();
+		}
+
 		// resolve mods
 
-		modCandidates = ModResolver.resolve(modCandidates, getEnvironmentType(), envDisabledMods);
+		ModResolutionInfo resolutionInfo = ModResolver.resolve(modCandidates, getEnvironmentType(), envDisabledMods);
+		modCandidates = resolutionInfo.getResolvedMods();
+
+		if (remoteAvailable) {
+			try {
+				KnotRemote.send(resolutionInfo.serialize().getBytes());
+			} catch (IOException e) {
+				if (!resolutionInfo.launchable()) {
+					e.addSuppressed(resolutionInfo.getException());
+				}
+
+				throw new UncheckedIOException(e);
+			}
+		}
+
+		if (!resolutionInfo.launchable()) {
+			throw resolutionInfo.getException();
+		}
 
 		dumpModList(modCandidates);
 		dumpNonFabricMods(discoverer.getNonFabricMods());
@@ -521,7 +559,7 @@ public final class FabricLoaderImpl extends net.fabricmc.loader.FabricLoader {
 			if (accessWidener == null) continue;
 
 			Path path = modContainer.findPath(accessWidener).orElse(null);
-			if (path == null) throw new RuntimeException(String.format("Missing accessWidener file %s from mod %s", accessWidener, modContainer.getMetadata().getId()));
+			if (path == null) throw new RuntimeException(String.format("Missing accessimport java.net.Socket;Widener file %s from mod %s", accessWidener, modContainer.getMetadata().getId()));
 
 			try (BufferedReader reader = Files.newBufferedReader(path)) {
 				accessWidenerReader.read(reader, FabricLauncherBase.getLauncher().getTargetNamespace());
