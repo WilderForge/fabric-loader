@@ -79,7 +79,7 @@ public final class FabricLoaderImpl extends net.fabricmc.loader.FabricLoader {
 
 	public static final int ASM_VERSION = Opcodes.ASM9;
 
-	public static final String VERSION = "0.16.14";
+	public static final String VERSION = "0.16.17+WilderForge";
 	public static final String MOD_ID = "fabricloader";
 
 	public static final String CACHE_DIR_NAME = ".fabric"; // relative to game dir
@@ -211,12 +211,13 @@ public final class FabricLoaderImpl extends net.fabricmc.loader.FabricLoader {
 
 		// discover mods
 
-		ModDiscoverer discoverer = new ModDiscoverer(versionOverrides, depOverrides);
+		ModDiscoverer discoverer = new ModDiscoverer(this.provider, this.isDevelopmentEnvironment(), this.getEnvironmentType(), versionOverrides, depOverrides);
 		discoverer.addCandidateFinder(new ClasspathModCandidateFinder());
 		discoverer.addCandidateFinder(new DirectoryModCandidateFinder(getModsDirectory0(), remapRegularMods));
 		discoverer.addCandidateFinder(new ArgumentModCandidateFinder(remapRegularMods));
 
 		Map<String, Set<ModCandidateImpl>> envDisabledMods = new HashMap<>();
+
 		ModDiscoveryInfo discoveryInfo = discoverer.discoverMods(this, envDisabledMods);
 		modCandidates = discoveryInfo.getFoundMods();
 
