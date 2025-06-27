@@ -24,7 +24,7 @@ import java.util.List;
 
 import net.fabricmc.loader.impl.lib.gson.JsonWriter;
 
-public class ModDiscoveryInfo {
+public class ModResolutionInfo {
 	//updated for every breaking change
 	private static final int SCHEMA = 1;
 
@@ -32,16 +32,16 @@ public class ModDiscoveryInfo {
 	//An example of when this could occur is when new metadata is added, but old metadata is not changed.
 	private static final int SCHEMA_VERSION = 1;
 
-	private final List<ModCandidateImpl> modsFound;
+	private final List<ModCandidateImpl> modsResolved;
 	private final ModResolutionException exception;
 
-	public ModDiscoveryInfo(List<ModCandidateImpl> discoveredMods, ModResolutionException exception) {
-		this.modsFound = discoveredMods;
+	public ModResolutionInfo(List<ModCandidateImpl> resolvedMods, ModResolutionException exception) {
+		this.modsResolved = resolvedMods;
 		this.exception = exception;
 	}
 
-	public List<ModCandidateImpl> getFoundMods() {
-		return modsFound;
+	public List<ModCandidateImpl> getResolvedMods() {
+		return modsResolved;
 	}
 
 	public ModResolutionException getException() {
@@ -70,7 +70,7 @@ public class ModDiscoveryInfo {
 
 			writer.beginArray();
 
-			for (ModCandidateImpl mod : modsFound) {
+			for (ModCandidateImpl mod : modsResolved) {
 				serializeMod(mod, writer);
 			}
 

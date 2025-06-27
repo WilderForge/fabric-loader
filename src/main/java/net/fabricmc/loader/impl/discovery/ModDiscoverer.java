@@ -90,7 +90,7 @@ public final class ModDiscoverer {
 		candidateFinders.add(f);
 	}
 
-	public ModDiscoveryInfo discoverMods(Map<String, Set<ModCandidateImpl>> envDisabledModsOut) throws ModResolutionException {
+	public ModDiscoveryInfo discoverMods(FabricLoaderImpl loader, Map<String, Set<ModCandidateImpl>> envDisabledModsOut) throws ModResolutionException {
 		long startTime = System.nanoTime();
 		ForkJoinPool pool = new ForkJoinPool();
 		Set<Path> processedPaths = new HashSet<>(); // suppresses duplicate paths
