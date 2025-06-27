@@ -49,6 +49,7 @@ import java.util.zip.ZipInputStream;
 import net.fabricmc.api.EnvType;
 import net.fabricmc.loader.api.SemanticVersion;
 import net.fabricmc.loader.api.metadata.ModMetadata;
+import net.fabricmc.loader.impl.FabricLoaderImpl;
 import net.fabricmc.loader.impl.FormattedException;
 import net.fabricmc.loader.impl.discovery.ModCandidateFinder.ModCandidateConsumer;
 import net.fabricmc.loader.impl.game.GameDefinition;
