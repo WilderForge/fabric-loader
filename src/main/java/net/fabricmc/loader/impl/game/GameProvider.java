@@ -33,7 +33,6 @@ public interface GameProvider extends GameDefinition { // name directly referenc
 
 	String getEntrypoint();
 	Path getLaunchDirectory();
-	boolean isObfuscated();
 	boolean requiresUrlClassLoader();
 	Set<BuiltinTransform> getBuiltinTransforms(String className);
 

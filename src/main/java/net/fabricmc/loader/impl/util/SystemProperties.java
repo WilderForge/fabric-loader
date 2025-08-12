@@ -99,7 +99,7 @@ public final class SystemProperties {
 		String val = System.getProperty(property);
 
 		return val != null && !val.equalsIgnoreCase("false");
-  }
+	}
 
 	private SystemProperties() {
 	}
