@@ -84,10 +84,23 @@ public final class SystemProperties {
 	public static final String DEBUG_DEOBFUSCATE_WITH_CLASSPATH = "fabric.debug.deobfuscateWithClasspath";
 	// whether fabric loader is running in a unit test, this affects logging classpath setup
 	public static final String UNIT_TEST = "fabric.unitTest";
+	// the address for the websocket to connect to
+	public static final String WEBSOCKET_ADDRESS = "fabric.socketAddress";
+	// the port for the websocket to connect to
+	public static final String WEBSOCKET_PORT = "fabric.socketPort";
+	// the client id for the websocket
+	public static final String WEBSOCKET_CLIENT_ID = "fabric.socketId";
+	// the max time in seconds the websocet client will run before forcefully closing
+	public static final String WEBSOCKET_TIMEOUT = "fabric.socketTimeout";
+	// if true, will perform mod discovery but skip launching the game, and send mod discovery info to the web socket if it is present.
+	public static final String WEBSOCKET_DISCOVERY = "fabric.websocketDiscovery";
 
 	public static boolean isSet(String property) {
 		String val = System.getProperty(property);
 
 		return val != null && !val.equalsIgnoreCase("false");
+  }
+
+	private SystemProperties() {
 	}
 }
