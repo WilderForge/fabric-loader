@@ -60,6 +60,7 @@ import net.fabricmc.loader.impl.discovery.RuntimeModRemapper;
 import net.fabricmc.loader.impl.entrypoint.EntrypointStorage;
 import net.fabricmc.loader.impl.game.GameProvider;
 import net.fabricmc.loader.impl.launch.FabricLauncherBase;
+import net.fabricmc.loader.impl.launch.MappingConfiguration;
 import net.fabricmc.loader.impl.launch.knot.Knot;
 import net.fabricmc.loader.impl.launch.knot.KnotRemote;
 import net.fabricmc.loader.impl.metadata.DependencyOverrides;
@@ -79,7 +80,7 @@ public final class FabricLoaderImpl extends net.fabricmc.loader.FabricLoader {
 
 	public static final int ASM_VERSION = Opcodes.ASM9;
 
-	public static final String VERSION = "0.16.14+WilderForge.0.1.0";
+	public static final String VERSION = "0.17.2+WilderForge.0.2.1";
 	public static final String MOD_ID = "fabricloader";
 
 	public static final String CACHE_DIR_NAME = ".fabric"; // relative to game dir
@@ -137,8 +138,13 @@ public final class FabricLoaderImpl extends net.fabricmc.loader.FabricLoader {
 	}
 
 	private void setGameDir(Path gameDir) {
-		this.gameDir = gameDir;
+		this.gameDir = gameDir.toAbsolutePath().normalize();
 		this.configDir = gameDir.resolve("config");
+	}
+
+	@Override
+	public String getRawGameVersion() {
+		return provider.getRawGameVersion();
 	}
 
 	@Override
@@ -286,7 +292,7 @@ public final class FabricLoaderImpl extends net.fabricmc.loader.FabricLoader {
 
 		// shuffle mods in-dev to reduce the risk of false order reliance, apply late load requests
 
-		if (isDevelopmentEnvironment() && System.getProperty(SystemProperties.DEBUG_DISABLE_MOD_SHUFFLE) == null) {
+		if (isDevelopmentEnvironment() && !SystemProperties.isSet(SystemProperties.DEBUG_DISABLE_MOD_SHUFFLE)) {
 			Collections.shuffle(modCandidates);
 		}
 
@@ -453,12 +459,11 @@ public final class FabricLoaderImpl extends net.fabricmc.loader.FabricLoader {
 	@Override
 	public MappingResolver getMappingResolver() {
 		if (mappingResolver == null) {
-			final String targetNamespace = FabricLauncherBase.getLauncher().getTargetNamespace();
+			MappingConfiguration config = FabricLauncherBase.getLauncher().getMappingConfiguration();
+			String runtimeNamespace = config.getRuntimeNamespace();
 
-			mappingResolver = new LazyMappingResolver(() -> new MappingResolverImpl(
-				FabricLauncherBase.getLauncher().getMappingConfiguration().getMappings(),
-				targetNamespace
-			), targetNamespace);
+			mappingResolver = new LazyMappingResolver(() -> new MappingResolverImpl(config.getMappings(), runtimeNamespace),
+					runtimeNamespace);
 		}
 
 		return mappingResolver;
@@ -563,7 +568,7 @@ public final class FabricLoaderImpl extends net.fabricmc.loader.FabricLoader {
 			if (path == null) throw new RuntimeException(String.format("Missing accessimport java.net.Socket;Widener file %s from mod %s", accessWidener, modContainer.getMetadata().getId()));
 
 			try (BufferedReader reader = Files.newBufferedReader(path)) {
-				accessWidenerReader.read(reader, FabricLauncherBase.getLauncher().getTargetNamespace());
+				accessWidenerReader.read(reader, FabricLauncherBase.getLauncher().getMappingConfiguration().getRuntimeNamespace());
 			} catch (Exception e) {
 				throw new RuntimeException("Failed to read accessWidener file from mod " + modMetadata.getId(), e);
 			}
