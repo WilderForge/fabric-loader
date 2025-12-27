@@ -38,12 +38,12 @@ import java.util.jar.Attributes;
 import java.util.jar.Manifest;
 import java.util.stream.Collectors;
 
-import net.fabricmc.accesswidener.AccessWidener;
-import net.fabricmc.accesswidener.AccessWidenerClassVisitor;
-import net.fabricmc.accesswidener.AccessWidenerReader;
-import net.fabricmc.accesswidener.AccessWidenerRemapper;
-import net.fabricmc.accesswidener.AccessWidenerWriter;
-import net.fabricmc.api.EnvType;
+import org.objectweb.asm.commons.Remapper;
+
+import net.fabricmc.classtweaker.api.ClassTweaker;
+import net.fabricmc.classtweaker.api.ClassTweakerReader;
+import net.fabricmc.classtweaker.api.ClassTweakerWriter;
+import net.fabricmc.classtweaker.visitors.ClassTweakerRemapperVisitor;
 import net.fabricmc.loader.impl.FabricLoaderImpl;
 import net.fabricmc.loader.impl.FormattedException;
 import net.fabricmc.loader.impl.launch.FabricLauncher;
@@ -55,6 +55,7 @@ import net.fabricmc.loader.impl.util.ManifestUtil;
 import net.fabricmc.loader.impl.util.SystemProperties;
 import net.fabricmc.loader.impl.util.log.Log;
 import net.fabricmc.loader.impl.util.log.LogCategory;
+import net.fabricmc.loader.impl.util.log.TinyRemapperLoggerAdapter;
 import net.fabricmc.tinyremapper.InputTag;
 import net.fabricmc.tinyremapper.NonClassCopyMode;
 import net.fabricmc.tinyremapper.OutputConsumerPath;
@@ -65,6 +66,7 @@ import net.fabricmc.tinyremapper.extension.mixin.MixinExtension;
 
 public final class RuntimeModRemapper {
 	private static final String REMAP_TYPE_MANIFEST_KEY = "Fabric-Loom-Mixin-Remap-Type";
+	private static final String REMAP_TYPE_MIXIN = "mixin";
 	private static final String REMAP_TYPE_STATIC = "static";
 
 	public static void remap(Collection<ModCandidateImpl> modCandidates, Collection<ModCandidateImpl> cpMods, Path tmpDir, Path outputDir,
@@ -81,9 +83,9 @@ public final class RuntimeModRemapper {
 		if (modsToRemap.isEmpty()) return;
 
 		MappingConfiguration config = FabricLauncherBase.getLauncher().getMappingConfiguration();
-		String modNs = MappingConfiguration.INTERMEDIARY_NAMESPACE;
+		String modNs = config.getDefaultModDistributionNamespace();
 		String runtimeNs = config.getRuntimeNamespace();
-		if (modNs.equals(runtimeNs)) return;
+		if (modNs.equals(runtimeNs) || !config.hasAnyMappings()) return;
 
 		Map<ModCandidateImpl, RemapInfo> infoMap = new HashMap<>();
 
@@ -92,9 +94,9 @@ public final class RuntimeModRemapper {
 		try {
 			FabricLauncher launcher = FabricLauncherBase.getLauncher();
 
-			AccessWidener mergedClassTweaker = new AccessWidener();
+			ClassTweaker mergedClassTweaker = ClassTweaker.newInstance();
 			mergedClassTweaker.visitHeader(modNs);
-			AccessWidenerReader ctReader = new AccessWidenerReader(mergedClassTweaker);
+			ClassTweakerReader ctReader = new ClassTweakerReader.create(mergedClassTweaker);
 
 			for (ModCandidateImpl mod : cpMods) {
 				RemapInfo info = new RemapInfo();
@@ -108,6 +110,9 @@ public final class RuntimeModRemapper {
 				}
 
 				Collection<String> classTweakers = mod.getMetadata().getClassTweakers(env, expressionFunctions);
+
+				info.outputPath = outputDir.resolve(mod.getDefaultFileName());
+				Files.deleteIfExists(info.outputPath);
 
 				if (classTweakers != null && !classTweakers.isEmpty()) {
 					info.classTweakers = new ArrayList<>(classTweakers.size());
@@ -160,13 +165,12 @@ public final class RuntimeModRemapper {
 				}
 			}
 
-			remapper = TinyRemapper.newRemapper()
+			remapper = TinyRemapper.newRemapper(new TinyRemapperLoggerAdapter(LogCategory.MOD_REMAP))
 					.withMappings(TinyUtils.createMappingProvider(launcher.getMappingConfiguration().getMappings(), modNs, runtimeNs))
 					.renameInvalidLocals(false)
 					.extension(new MixinExtension(remapMixins::contains))
 					.extraAnalyzeVisitor((mrjVersion, className, next) ->
-					AccessWidenerClassVisitor.createClassVisitor(FabricLoaderImpl.ASM_VERSION, next, mergedClassTweaker)
-							)
+					mergedClassTweaker.createClassVisitor(FabricLoaderImpl.ASM_VERSION, next, null))
 					.build();
 
 			try {
@@ -175,7 +179,7 @@ public final class RuntimeModRemapper {
 				throw new RuntimeException("Failed to populate remap classpath", e);
 			}
 
-			// gather inputs and class path
+			String defaultMixinRemapType = System.getProperty(SystemProperties.DEFAULT_MIXIN_REMAP_TYPE, REMAP_TYPE_MIXIN);
 
 			for (ModCandidateImpl mod : cpMods) {
 				RemapInfo info = infoMap.get(mod);
@@ -184,7 +188,7 @@ public final class RuntimeModRemapper {
 					InputTag tag = remapper.createInputTag();
 					info.tag = tag;
 
-					if (requiresMixinRemap(info.inputPaths)) {
+					if (requiresMixinRemap(info.inputPaths, defaultMixinRemapType)) {
 						remapMixins.add(tag);
 					}
 
@@ -225,13 +229,21 @@ public final class RuntimeModRemapper {
 						outputConsumer.addNonClassFiles(inputJar, remapper, resourceRemappers);
 					}
 
-					remapper.apply(outputConsumer, info.tag);
+					info.outputConsumerPath = outputConsumer;
+
+				remapper.apply(outputConsumer, info.tag);
+			}
+
+			//Done in a 3rd loop as this can happen when the remapper is doing its thing.
+			for (ModCandidateImpl mod : modsToRemap) {
+				RemapInfo info = infoMap.get(mod);
+
+				if (info.classTweaker != null) {
+					info.classTweaker = remapClassTweaker(info.classTweaker, remapper.getEnvironment().getRemapper(), modNs, runtimeNs);
 				}
 			}
 
 			remapper.finish();
-
-			// update paths
 
 			for (ModCandidateImpl mod : modsToRemap) {
 				RemapInfo info = infoMap.get(mod);
@@ -335,6 +347,7 @@ public final class RuntimeModRemapper {
 		List<Path> inputPaths;
 		Path outputPath;
 		boolean inputIsTemp;
+		OutputConsumerPath outputConsumerPath;
 		Collection<ClassTweakerInfo> classTweakers;
 	}
 

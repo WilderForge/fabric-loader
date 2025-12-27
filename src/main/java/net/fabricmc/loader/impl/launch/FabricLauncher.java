@@ -61,7 +61,9 @@ public interface FabricLauncher {
 
 	boolean isDevelopment();
 
-	String getDefaultRuntimeNamespace();
+	String getEntrypoint();
+
+	String getTargetNamespace();
 
 	List<Path> getClassPath();
 }

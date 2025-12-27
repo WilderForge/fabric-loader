@@ -38,9 +38,9 @@ import java.util.function.Function;
 import org.jetbrains.annotations.VisibleForTesting;
 import org.objectweb.asm.Opcodes;
 
-import net.fabricmc.accesswidener.AccessWidener;
-import net.fabricmc.accesswidener.AccessWidenerReader;
 import net.fabricmc.api.EnvType;
+import net.fabricmc.classtweaker.api.ClassTweaker;
+import net.fabricmc.classtweaker.api.ClassTweakerReader;
 import net.fabricmc.loader.api.LanguageAdapter;
 import net.fabricmc.loader.api.MappingResolver;
 import net.fabricmc.loader.api.ModContainer;
@@ -86,7 +86,7 @@ public final class FabricLoaderImpl extends net.fabricmc.loader.FabricLoader {
 
 	public static final int ASM_VERSION = Opcodes.ASM9;
 
-	public static final String VERSION = "0.16.0";
+	public static final String VERSION = "0.18.4";
 	public static final String MOD_ID = "fabricloader";
 
 	public static final String CACHE_DIR_NAME = ".fabric"; // relative to game dir
@@ -101,7 +101,7 @@ public final class FabricLoaderImpl extends net.fabricmc.loader.FabricLoader {
 
 	private final Map<String, LanguageAdapter> adapterMap = new HashMap<>();
 	private final EntrypointStorage entrypointStorage = new EntrypointStorage();
-	private final AccessWidener accessWidener = new AccessWidener();
+	private final ClassTweaker classTweaker = ClassTweaker.newInstance();
 
 	private final ObjectShare objectShare = new ObjectShareImpl();
 
@@ -157,6 +157,11 @@ public final class FabricLoaderImpl extends net.fabricmc.loader.FabricLoader {
 	private void setGameDir(Path gameDir) {
 		this.gameDir = gameDir.toAbsolutePath().normalize();
 		this.configDir = gameDir.resolve("config");
+	}
+
+	@Override
+	public String getRawGameVersion() {
+		return provider.getRawGameVersion();
 	}
 
 	@Override
@@ -513,8 +518,8 @@ public final class FabricLoaderImpl extends net.fabricmc.loader.FabricLoader {
 			} catch (Throwable t) {
 				exception = ExceptionUtil.gatherExceptions(t,
 						exception,
-						exc -> new RuntimeException(String.format("Could not execute entrypoint stage '%s' due to errors, provided by '%s'!",
-								key, container.getProvider().getMetadata().getId()),
+						exc -> new RuntimeException(String.format("Could not execute entrypoint stage '%s' due to errors, provided by '%s' at '%s'!",
+								key, container.getProvider().getMetadata().getId(), container.getDefinition()),
 								exc));
 			}
 		}
@@ -627,7 +632,7 @@ public final class FabricLoaderImpl extends net.fabricmc.loader.FabricLoader {
 	}
 
 	public void loadClassTweakers() {
-		AccessWidenerReader accessWidenerReader = new AccessWidenerReader(accessWidener);
+		ClassTweakerReader ctReader = ClassTweakerReader.create(classTweaker);
 
 		for (ModContainer modContainer : mods) {
 			LoaderModMetadata modMetadata = (LoaderModMetadata) modContainer.getMetadata();
@@ -639,7 +644,7 @@ public final class FabricLoaderImpl extends net.fabricmc.loader.FabricLoader {
 				if (path == null) throw new RuntimeException(String.format("Missing classTweaker (accessWidener) file %s from mod %s", loc, modContainer.getMetadata().getId()));
 
 				try (BufferedReader reader = Files.newBufferedReader(path)) {
-					accessWidenerReader.read(reader, FabricLauncherBase.getLauncher().getMappingConfiguration().getRuntimeNamespace());
+					ctReader.read(reader, FabricLauncherBase.getLauncher().getMappingConfiguration().getRuntimeNamespace());
 				} catch (Exception e) {
 					throw new RuntimeException("Failed to read classTweaker (accessWidener) file from mod " + modMetadata.getId(), e);
 				}
@@ -702,8 +707,8 @@ public final class FabricLoaderImpl extends net.fabricmc.loader.FabricLoader {
 		}
 	}
 
-	public AccessWidener getAccessWidener() {
-		return accessWidener;
+	public ClassTweaker getClassTweaker() {
+		return classTweaker;
 	}
 
 	/**

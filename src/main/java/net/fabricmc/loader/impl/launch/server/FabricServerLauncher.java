@@ -73,11 +73,14 @@ public class FabricServerLauncher {
 	}
 
 	private static void setup(String... runArguments) throws IOException {
-		if (System.getProperty(SystemProperties.GAME_JAR_PATH) == null) {
-			System.setProperty(SystemProperties.GAME_JAR_PATH, getServerJarPath());
+		String path = System.getProperty(SystemProperties.GAME_JAR_PATH);
+
+		if (path == null) {
+			path = getServerJarPath();
+			System.setProperty(SystemProperties.GAME_JAR_PATH, path);
 		}
 
-		Path serverJar = LoaderUtil.normalizePath(Paths.get(System.getProperty(SystemProperties.GAME_JAR_PATH)));
+		Path serverJar = LoaderUtil.normalizePath(Paths.get(path));
 
 		if (!Files.exists(serverJar)) {
 			System.err.println("The Minecraft server .JAR is missing (" + serverJar + ")!");

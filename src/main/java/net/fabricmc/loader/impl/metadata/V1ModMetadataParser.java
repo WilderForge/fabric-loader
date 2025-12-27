@@ -36,6 +36,11 @@ import net.fabricmc.loader.impl.lib.gson.JsonToken;
 final class V1ModMetadataParser {
 	/**
 	 * Reads a {@code fabric.mod.json} file of schema version {@code 1}.
+	 *
+	 * @param logger the logger to print warnings to
+	 * @param reader the json reader to read the file with
+	 * @return the metadata of this file, null if the file could not be parsed
+	 * @throws IOException         if there was any issue reading the file
 	 */
 	static void parse(JsonReader reader, List<ParseWarning> warnings, ModMetadataBuilderImpl builder) throws IOException, ParseMetadataException {
 		while (reader.hasNext()) {
@@ -44,13 +49,34 @@ final class V1ModMetadataParser {
 			// Work our way from required to entirely optional
 			switch (key) {
 			case "schemaVersion":
-				V0ModMetadataParser.readSchemaVersion(reader, 1);
+				// Duplicate field, make sure it matches our current schema version
+				if (reader.peek() != JsonToken.NUMBER) {
+					throw new ParseMetadataException("Duplicate \"schemaVersion\" field is not a number", reader);
+				}
+
+				final int read = reader.nextInt();
+
+				if (read != 1) {
+					throw new ParseMetadataException(String.format("Duplicate \"schemaVersion\" field does not match the predicted schema version of 1. Duplicate field value is %s", read), reader);
+				}
 				break;
 			case "id":
-				V0ModMetadataParser.readModId(reader, builder);
+				if (reader.peek() != JsonToken.STRING) {
+					throw new ParseMetadataException("Mod id must be a non-empty string with a length of 3-64 characters.", reader);
+				}
+
+				id = reader.nextString();
 				break;
 			case "version":
-				V0ModMetadataParser.readModVersion(reader, builder);
+				if (reader.peek() != JsonToken.STRING) {
+					throw new ParseMetadataException("Version must be a non-empty string", reader);
+				}
+
+				try {
+					version = VersionParser.parse(reader.nextString(), false);
+				} catch (VersionParsingException e) {
+					throw new ParseMetadataException("Failed to parse version", e);
+				}
 				break;
 			case "provides":
 				readProvides(reader, builder);
@@ -71,25 +97,33 @@ final class V1ModMetadataParser {
 				builder.addClassTweaker(ParserUtil.readString(reader, key));
 				break;
 			case "depends":
-				V0ModMetadataParser.readDependency(reader, ModDependency.Kind.DEPENDS, key, builder);
+				readDependenciesContainer(reader, ModDependency.Kind.DEPENDS, key, builder);
 				break;
 			case "recommends":
-				V0ModMetadataParser.readDependency(reader, ModDependency.Kind.RECOMMENDS, key, builder);
+				readDependenciesContainer(reader, ModDependency.Kind.RECOMMENDS, key, builder);
 				break;
 			case "suggests":
-				V0ModMetadataParser.readDependency(reader, ModDependency.Kind.SUGGESTS, key, builder);
+				readDependenciesContainer(reader, ModDependency.Kind.SUGGESTS, key, builder);
 				break;
 			case "conflicts":
-				V0ModMetadataParser.readDependency(reader, ModDependency.Kind.CONFLICTS, key, builder);
+				readDependenciesContainer(reader, ModDependency.Kind.CONFLICTS, key, builder);
 				break;
 			case "breaks":
-				V0ModMetadataParser.readDependency(reader, ModDependency.Kind.BREAKS, key, builder);
+				readDependenciesContainer(reader, ModDependency.Kind.BREAKS, key, builder);
 				break;
 			case "name":
-				V0ModMetadataParser.readModName(reader, builder);
+				if (reader.peek() != JsonToken.STRING) {
+					throw new ParseMetadataException("Mod name must be a string", reader);
+				}
+
+				name = reader.nextString();
 				break;
 			case "description":
-				V0ModMetadataParser.readModDescription(reader, builder);
+				if (reader.peek() != JsonToken.STRING) {
+					throw new ParseMetadataException("Mod description must be a string", reader);
+				}
+
+				description = reader.nextString();
 				break;
 			case "authors":
 				readPeople(reader, true, warnings, builder);
@@ -421,6 +455,48 @@ final class V1ModMetadataParser {
 		default:
 			throw new ParseMetadataException("License must be a string or array of strings!", reader);
 		}
+	}
+
+	private static void readDependenciesContainer(JsonReader reader, ModDependency.Kind kind, List<ModDependency> out) throws IOException, ParseMetadataException {
+		if (reader.peek() != JsonToken.BEGIN_OBJECT) {
+			throw new ParseMetadataException("Dependency container must be an object!", reader);
+		}
+
+		reader.beginObject();
+
+		while (reader.hasNext()) {
+			final String modId = reader.nextName();
+			final List<String> matcherStringList = new ArrayList<>();
+
+			switch (reader.peek()) {
+				case STRING:
+					matcherStringList.add(reader.nextString());
+					break;
+				case BEGIN_ARRAY:
+					reader.beginArray();
+
+					while (reader.hasNext()) {
+						if (reader.peek() != JsonToken.STRING) {
+							throw new ParseMetadataException("Dependency version range array must only contain string values", reader);
+						}
+
+						matcherStringList.add(reader.nextString());
+					}
+
+					reader.endArray();
+					break;
+				default:
+					throw new ParseMetadataException("Dependency version range must be a string or string array!", reader);
+			}
+
+			try {
+				out.add(new ModDependencyImpl(kind, modId, matcherStringList));
+			} catch (VersionParsingException e) {
+				throw new ParseMetadataException(e);
+			}
+		}
+
+		reader.endObject();
 	}
 
 	static void readIcon(JsonReader reader, ModMetadataBuilder builder) throws IOException, ParseMetadataException {

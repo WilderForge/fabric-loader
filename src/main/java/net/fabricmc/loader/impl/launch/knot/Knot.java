@@ -350,15 +350,17 @@ public final class Knot extends FabricLauncherBase {
 		return classLoader.getManifest(originPath);
 	}
 
+	@Override
+	public String getEntrypoint() {
+		return provider.getEntrypoint();
+	}
+
 	public static void main(String[] args) {
 		new Knot(null).init(args);
 	}
 
 	static {
 		LoaderUtil.verifyNotInTargetCl(Knot.class);
-
-		if (IS_DEVELOPMENT) {
-			LoaderUtil.verifyClasspath();
-		}
+		LoaderUtil.verifyClasspath();
 	}
 }

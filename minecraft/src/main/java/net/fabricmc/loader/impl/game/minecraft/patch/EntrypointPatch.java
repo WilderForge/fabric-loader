@@ -55,6 +55,7 @@ import net.fabricmc.loader.impl.util.version.VersionPredicateParser;
 
 public class EntrypointPatch {
 	private static final VersionPredicate VERSION_1_19_4 = createVersionPredicate(">=1.19.4-");
+	private static final VersionPredicate VERSION_25w14craftmine = createVersionPredicate("1.21.6-alpha.25.14.craftmine");
 
 	public static ClassTransformer<?> create(GameProvider gameProvider) {
 		String entrypoint = gameProvider.getEntrypoint();
@@ -94,6 +95,7 @@ public class EntrypointPatch {
 		// Main -> Game entrypoint search
 		//
 		// -- CLIENT --
+		// pre-classic: find init() invocation before "Failed to start RubyDung" log message
 		// pre-1.6 (seems to hold to 0.0.11!): find the only non-static non-java-packaged Object field
 		// 1.6.1+: [client].start() [INVOKEVIRTUAL]
 		// 19w04a: [client].<init> [INVOKESPECIAL] -> Thread.start()
@@ -102,6 +104,8 @@ public class EntrypointPatch {
 		// (1.6-1.8?)+:     an <init> starting with java.io.File can be assumed to be definite
 		// (20w20b-20w21a): Now has its own main class, that constructs the server class. Find a specific regex string in the class.
 		// (20w22a)+:       Datapacks are now reloaded in main. To ensure that mods load correctly, inject into Main after --safeMode check.
+
+		boolean is20w22aServerOrHigher = false;
 
 		if (data.envType == EnvType.CLIENT) {
 			// pre-1.6 route
@@ -114,8 +118,9 @@ public class EntrypointPatch {
 			}
 		}
 
-		// main method searches
-		MethodNode mainMethod = TransformUtil.findMethod(mainClass, (method) -> method.name.equals("main") && method.desc.equals("([Ljava/lang/String;)V") && TransformUtil.isPublicStatic(method.access));
+		if (gameEntrypoint == null) {
+			// main method searches
+			MethodNode mainMethod = TransformUtil.findMethod(mainClass, (method) -> method.name.equals("main") && method.desc.equals("([Ljava/lang/String;)V") && TransformUtil.isPublicStatic(method.access));
 
 		if (mainMethod == null) {
 			throw new RuntimeException("Could not find main method in " + data.entrypoint + "!");
@@ -208,6 +213,62 @@ public class EntrypointPatch {
 					}
 				}
 
+				if (data.envType == EnvType.CLIENT && !data.isApplet && gmCandidate.name.equals("run")) {
+					// For pre-classic, try to find the "Failed to start RubyDung" log message
+					// that is shown if the init() method throws an exception, then patch said
+					// init() method.
+
+					MethodInsnNode potentialInitInsn = null;
+					boolean hasFailedToStartLog = false;
+
+					for (AbstractInsnNode insn : gmCandidate.instructions) {
+						if (insn instanceof MethodInsnNode && potentialInitInsn == null) {
+							MethodInsnNode methodInsn = (MethodInsnNode) insn;
+
+							if (methodInsn.getOpcode() == Opcodes.INVOKEVIRTUAL && methodInsn.owner.equals(gameClass.name)) {
+								potentialInitInsn = methodInsn;
+							} else {
+								// first method insn is not init(), this is not pre-classic!
+								break;
+							}
+						}
+
+						if (insn instanceof LdcInsnNode && !hasFailedToStartLog) {
+							if (potentialInitInsn == null) {
+								// found LDC before init() invocation, this is not pre-classic!
+								break;
+							}
+
+							Object cst = ((LdcInsnNode) insn).cst;
+
+							if (cst instanceof String) {
+								String s = (String) cst;
+
+								if (s.equals("Failed to start RubyDung")) {
+									hasFailedToStartLog = true;
+								}
+							}
+
+							if (!hasFailedToStartLog) {
+								// first LDC insn is not the expected log message, this is not pre-classic!
+								break;
+							}
+						}
+
+						if (potentialInitInsn != null && hasFailedToStartLog) {
+							// found log message and init() invocation, now get the init() method node
+							for (MethodNode gm : gameClass.methods) {
+								if (gm.name.equals(potentialInitInsn.name) && gm.desc.equals(potentialInitInsn.desc)) {
+									gameMethod = gm;
+									gameMethodQuality = 2;
+
+									break;
+								}
+							}
+						}
+					}
+				}
+
 				if (data.envType == EnvType.CLIENT && !data.isApplet && gameMethodQuality < 2) {
 					// Try to find a method with an LDC string "LWJGL Version: ".
 					// This is the "init()" method, or as of 19w38a is the constructor, or called somewhere in that vicinity,
@@ -221,9 +282,7 @@ public class EntrypointPatch {
 						if (insn.getOpcode() == Opcodes.INVOKESTATIC && insn instanceof MethodInsnNode) {
 							final MethodInsnNode methodInsn = (MethodInsnNode) insn;
 
-							if ("currentThread".equals(methodInsn.name)
-									&& "java/lang/Thread".equals(methodInsn.owner)
-									&& "()Ljava/lang/Thread;".equals(methodInsn.desc)) {
+							if ("currentThread".equals(methodInsn.name) && "java/lang/Thread".equals(methodInsn.owner) && "()Ljava/lang/Thread;".equals(methodInsn.desc)) {
 								currentThreadNode = methodInsn;
 							}
 						} else if (insn instanceof LdcInsnNode) {
@@ -236,9 +295,7 @@ public class EntrypointPatch {
 								if (s.startsWith("LWJGL Version: ") || s.startsWith("Backend library: ")) {
 									hasLwjglLog = true;
 
-									if ("LWJGL Version: ".equals(s)
-											|| "LWJGL Version: {}".equals(s)
-											|| "Backend library: {}".equals(s)) {
+									if ("LWJGL Version: ".equals(s) || "LWJGL Version: {}".equals(s) || "Backend library: {}".equals(s)) {
 										qual = 3;
 										lwjglLogNode = insn;
 									}
@@ -334,17 +391,18 @@ public class EntrypointPatch {
 		// Move before the `server.properties` ldc is pushed onto stack
 		TransformUtil.moveBefore(it, serverPropertiesLdc);
 
-		// Detect if we are running exactly 20w22a.
-		// Find the synthetic method where dedicated server instance is created so we can set the game instance.
-		// This cannot be the main method, must be static (all methods are static, so useless to check)
-		// Cannot return a void or boolean
-		// Is only method that returns a class instance
-		// If we do not find this, then we are certain this is 20w22a.
-		MethodNode serverStartMethod = TransformUtil.findMethod(gameClass, method -> {
-			if ((method.access & Opcodes.ACC_SYNTHETIC) == 0 // reject non-synthetic
-					|| method.name.equals("main") && method.desc.equals("([Ljava/lang/String;)V")) { // reject main method (theoretically superfluous now)
-				return false;
-			}
+				// Detect if we are running exactly 20w22a.
+				// Find the synthetic method where dedicated server instance is created so we can set the game instance.
+				// This cannot be the main method, must be static (all methods are static, so useless to check)
+				// Cannot return a void or boolean
+				// Is only method that returns a class instance
+				// If we do not find this, then we are certain this is 20w22a.
+				MethodNode serverStartMethod = TransformUtil.findMethod(gameClass, method -> {
+					if ((method.access & Opcodes.ACC_SYNTHETIC) == 0 // reject non-synthetic
+							|| method.name.equals("main") && method.desc.equals("([Ljava/lang/String;)V") // reject main method (theoretically superfluous now)
+							|| VERSION_25w14craftmine.test(gameVersion) && method.parameters.size() < 10) { // reject problematic extra methods
+						return false;
+					}
 
 			final Type methodReturnType = Type.getReturnType(method.desc);
 
@@ -547,6 +605,17 @@ public class EntrypointPatch {
 				finishEntrypoint(data.envType, it);
 
 				return true;
+			}
+
+			// TODO: better handling of run directory for pre-classic
+			if (!patched && gameMethod != gameConstructor) {
+				ListIterator<AbstractInsnNode> it = gameMethod.instructions.iterator();
+
+				it.add(new InsnNode(Opcodes.ACONST_NULL));
+				it.add(new VarInsnNode(Opcodes.ALOAD, 0));
+				finishEntrypoint(type, it);
+
+				patched = true;
 			}
 		}
 
