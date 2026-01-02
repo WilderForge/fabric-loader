@@ -71,6 +71,10 @@ public interface GameProvider extends GameDefinition { // name directly referenc
 		return defaultNs;
 	}
 
+	default String getDefaultModDistributionNamespace(String defaultNs) {
+		return defaultNs;
+	}
+
 	default boolean canOpenErrorGui() {
 		return true;
 	}

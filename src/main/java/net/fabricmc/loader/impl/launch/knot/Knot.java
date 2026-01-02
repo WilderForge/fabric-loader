@@ -146,7 +146,7 @@ public final class Knot extends FabricLauncherBase {
 			return cl;
 		}
 
-		FabricLoaderImpl.INSTANCE.loadAccessWideners();
+		FabricLoaderImpl.INSTANCE.loadClassTweakers();
 
 		FabricMixinBootstrap.init(getEnvironmentType(), loader);
 		FabricLauncherBase.finishMixinBootstrapping();
