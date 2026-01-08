@@ -156,7 +156,7 @@ public final class ModMetadataParser {
 			V0ModMetadataParser.parse(reader, warnings, builder);
 			break;
 		case 1:
-			V1ModMetadataParser.parse(reader, warnings, builder);
+			V1ModMetadataParser.parse(reader, builder);
 			break;
 		case 2:
 			V2ModMetadataParser.parse(reader, warnings, builder);

@@ -157,6 +157,13 @@ public abstract class FabricTweaker extends FabricLauncherBase implements ITweak
 		return isPrimaryTweaker ? FabricLoaderImpl.INSTANCE.getGameProvider().getLaunchArguments(false) : new String[0];
 	}
 
+
+	@Override
+	public String getEntrypoint() {
+		return getLaunchTarget();
+	}
+
+
 	@Override
 	public IMixinTransformer getMixinTransformer() {
 		// TODO Auto-generated method stub

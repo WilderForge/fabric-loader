@@ -105,8 +105,6 @@ public class EntrypointPatch {
 		// (20w20b-20w21a): Now has its own main class, that constructs the server class. Find a specific regex string in the class.
 		// (20w22a)+:       Datapacks are now reloaded in main. To ensure that mods load correctly, inject into Main after --safeMode check.
 
-		boolean is20w22aServerOrHigher = false;
-
 		if (data.envType == EnvType.CLIENT) {
 			// pre-1.6 route
 			List<FieldNode> newGameFields = TransformUtil.findFields(mainClass,
@@ -118,9 +116,8 @@ public class EntrypointPatch {
 			}
 		}
 
-		if (gameEntrypoint == null) {
-			// main method searches
-			MethodNode mainMethod = TransformUtil.findMethod(mainClass, (method) -> method.name.equals("main") && method.desc.equals("([Ljava/lang/String;)V") && TransformUtil.isPublicStatic(method.access));
+		// main method searches
+		MethodNode mainMethod = TransformUtil.findMethod(mainClass, (method) -> method.name.equals("main") && method.desc.equals("([Ljava/lang/String;)V") && TransformUtil.isPublicStatic(method.access));
 
 		if (mainMethod == null) {
 			throw new RuntimeException("Could not find main method in " + data.entrypoint + "!");
@@ -400,7 +397,7 @@ public class EntrypointPatch {
 				MethodNode serverStartMethod = TransformUtil.findMethod(gameClass, method -> {
 					if ((method.access & Opcodes.ACC_SYNTHETIC) == 0 // reject non-synthetic
 							|| method.name.equals("main") && method.desc.equals("([Ljava/lang/String;)V") // reject main method (theoretically superfluous now)
-							|| VERSION_25w14craftmine.test(gameVersion) && method.parameters.size() < 10) { // reject problematic extra methods
+							|| VERSION_25w14craftmine.test(data.gameVersion) && method.parameters.size() < 10) { // reject problematic extra methods
 						return false;
 					}
 
@@ -605,17 +602,6 @@ public class EntrypointPatch {
 				finishEntrypoint(data.envType, it);
 
 				return true;
-			}
-
-			// TODO: better handling of run directory for pre-classic
-			if (!patched && gameMethod != gameConstructor) {
-				ListIterator<AbstractInsnNode> it = gameMethod.instructions.iterator();
-
-				it.add(new InsnNode(Opcodes.ACONST_NULL));
-				it.add(new VarInsnNode(Opcodes.ALOAD, 0));
-				finishEntrypoint(type, it);
-
-				patched = true;
 			}
 		}
 

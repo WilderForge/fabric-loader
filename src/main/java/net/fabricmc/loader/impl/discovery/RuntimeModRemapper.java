@@ -38,7 +38,7 @@ import java.util.jar.Attributes;
 import java.util.jar.Manifest;
 import java.util.stream.Collectors;
 
-import org.objectweb.asm.commons.Remapper;
+import net.fabricmc.api.EnvType;
 
 import net.fabricmc.classtweaker.api.ClassTweaker;
 import net.fabricmc.classtweaker.api.ClassTweakerReader;
@@ -70,7 +70,7 @@ public final class RuntimeModRemapper {
 	private static final String REMAP_TYPE_STATIC = "static";
 
 	public static void remap(Collection<ModCandidateImpl> modCandidates, Collection<ModCandidateImpl> cpMods, Path tmpDir, Path outputDir,
-			EnvType env, Map<String, DynamicFunction> expressionFunctions) {
+							 EnvType env, Map<String, DynamicFunction> expressionFunctions) {
 		Set<ModCandidateImpl> modsToRemap = new HashSet<>();
 		Set<InputTag> remapMixins = new HashSet<>();
 
@@ -96,7 +96,7 @@ public final class RuntimeModRemapper {
 
 			ClassTweaker mergedClassTweaker = ClassTweaker.newInstance();
 			mergedClassTweaker.visitHeader(modNs);
-			ClassTweakerReader ctReader = new ClassTweakerReader.create(mergedClassTweaker);
+			ClassTweakerReader ctReader = ClassTweakerReader.create(mergedClassTweaker);
 
 			for (ModCandidateImpl mod : cpMods) {
 				RemapInfo info = new RemapInfo();
@@ -181,6 +181,8 @@ public final class RuntimeModRemapper {
 
 			String defaultMixinRemapType = System.getProperty(SystemProperties.DEFAULT_MIXIN_REMAP_TYPE, REMAP_TYPE_MIXIN);
 
+			// gather inputs and class path
+
 			for (ModCandidateImpl mod : cpMods) {
 				RemapInfo info = infoMap.get(mod);
 
@@ -201,8 +203,7 @@ public final class RuntimeModRemapper {
 				}
 			}
 
-			// copy non-classes, remap AWs, apply remapping
-
+			//Done in a 3rd loop as this can happen when the remapper is doing its thing.
 			for (ModCandidateImpl mod : modsToRemap) {
 				RemapInfo info = infoMap.get(mod);
 				List<ResourceRemapper> resourceRemappers = NonClassCopyMode.FIX_META_INF.remappers;
@@ -219,7 +220,7 @@ public final class RuntimeModRemapper {
 
 				try (OutputConsumerPath outputConsumer = new OutputConsumerPath.Builder(info.outputPath).build()) {
 					for (Path path : info.inputPaths) {
-						FileSystemUtil.FileSystemDelegate delegate = FileSystemUtil.getJarFileSystem(path, false); // TODO: close properly
+						FileSystemUtil.FileSystemDelegate delegate = FileSystemUtil.getJarFileSystem(path, false);
 
 						if (delegate.get() == null) {
 							throw new RuntimeException("Could not open JAR file " + path + " for NIO reading!");
@@ -231,15 +232,7 @@ public final class RuntimeModRemapper {
 
 					info.outputConsumerPath = outputConsumer;
 
-				remapper.apply(outputConsumer, info.tag);
-			}
-
-			//Done in a 3rd loop as this can happen when the remapper is doing its thing.
-			for (ModCandidateImpl mod : modsToRemap) {
-				RemapInfo info = infoMap.get(mod);
-
-				if (info.classTweaker != null) {
-					info.classTweaker = remapClassTweaker(info.classTweaker, remapper.getEnvironment().getRemapper(), modNs, runtimeNs);
+					remapper.apply(outputConsumer, info.tag);
 				}
 			}
 
@@ -247,6 +240,19 @@ public final class RuntimeModRemapper {
 
 			for (ModCandidateImpl mod : modsToRemap) {
 				RemapInfo info = infoMap.get(mod);
+
+				info.outputConsumerPath.close();
+
+				for (ClassTweakerInfo classTweaker : info.classTweakers) {
+					if (classTweaker.path != null) {
+						try (FileSystemUtil.FileSystemDelegate jarFs = FileSystemUtil.getJarFileSystem(info.outputPath, false)) {
+							FileSystem fs = jarFs.get();
+
+							Files.delete(fs.getPath(classTweaker.path));
+							Files.write(fs.getPath(classTweaker.path), classTweaker.data);
+						}
+					}
+				}
 
 				mod.setPaths(Collections.singletonList(info.outputPath));
 			}
@@ -295,12 +301,12 @@ public final class RuntimeModRemapper {
 				ClassTweakerInfo ct = findClassTweaker(remapInfo, relativePath.toString());
 				assert ct != null; // shouldn't happen due to canTransform
 
-				AccessWidenerWriter writer = new AccessWidenerWriter();
-				AccessWidenerRemapper remappingDecorator = new AccessWidenerRemapper(writer, remapper.getEnvironment().getRemapper(), modNs, runtimeNs);
-				AccessWidenerReader reader = new AccessWidenerReader(remappingDecorator);
+				ClassTweakerWriter writer = ClassTweakerWriter.create(ClassTweaker.CT_LATEST);
+				ClassTweakerRemapperVisitor remappingDecorator =  new ClassTweakerRemapperVisitor(writer, remapper.getEnvironment().getRemapper(), modNs, runtimeNs);
+				ClassTweakerReader reader = ClassTweakerReader.create(remappingDecorator);
 				reader.read(ct.data, modNs);
 
-				Files.write(destinationDirectory.resolve(relativePath.toString()), writer.write());
+				Files.write(destinationDirectory.resolve(relativePath.toString()), writer.getOutput());
 			}
 		};
 	}
@@ -327,14 +333,16 @@ public final class RuntimeModRemapper {
 				.collect(Collectors.toList());
 	}
 
-	private static boolean requiresMixinRemap(Collection<Path> inputPaths) throws IOException, URISyntaxException {
+	private static boolean requiresMixinRemap(Collection<Path> inputPaths, String defaultMixinRemapType) throws IOException, URISyntaxException {
 		for (Path inputPath : inputPaths) {
 			Manifest manifest = ManifestUtil.readManifest(inputPath);
 			if (manifest == null) continue;
 
 			Attributes mainAttributes = manifest.getMainAttributes();
+			String remapType = mainAttributes.getValue(REMAP_TYPE_MANIFEST_KEY);
+			if (remapType == null) remapType = defaultMixinRemapType;
 
-			if (REMAP_TYPE_STATIC.equalsIgnoreCase(mainAttributes.getValue(REMAP_TYPE_MANIFEST_KEY))) {
+			if (REMAP_TYPE_STATIC.equalsIgnoreCase(remapType)) {
 				return true;
 			}
 		}

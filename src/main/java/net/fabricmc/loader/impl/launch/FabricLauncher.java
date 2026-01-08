@@ -63,7 +63,5 @@ public interface FabricLauncher {
 
 	String getEntrypoint();
 
-	String getTargetNamespace();
-
 	List<Path> getClassPath();
 }
