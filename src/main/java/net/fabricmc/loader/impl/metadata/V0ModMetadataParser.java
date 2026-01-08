@@ -17,99 +17,51 @@
 package net.fabricmc.loader.impl.metadata;
 
 import java.io.IOException;
-import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
-import net.fabricmc.loader.api.Version;
 import net.fabricmc.loader.api.VersionParsingException;
+import net.fabricmc.loader.api.extension.ModMetadataBuilder;
+import net.fabricmc.loader.api.extension.ModMetadataBuilder.ModDependencyBuilder;
 import net.fabricmc.loader.api.metadata.ContactInformation;
 import net.fabricmc.loader.api.metadata.ModDependency;
 import net.fabricmc.loader.api.metadata.ModEnvironment;
 import net.fabricmc.loader.api.metadata.Person;
 import net.fabricmc.loader.impl.lib.gson.JsonReader;
 import net.fabricmc.loader.impl.lib.gson.JsonToken;
-import net.fabricmc.loader.impl.util.version.VersionParser;
 
 final class V0ModMetadataParser {
 	private static final Pattern WEBSITE_PATTERN = Pattern.compile("\\((.+)\\)");
 	private static final Pattern EMAIL_PATTERN = Pattern.compile("<(.+)>");
 
-	public static LoaderModMetadata parse(JsonReader reader) throws IOException, ParseMetadataException {
-		List<ParseWarning> warnings = new ArrayList<>();
-
-		// All the values the `fabric.mod.json` may contain:
-		// Required
-		String id = null;
-		Version version = null;
-
-		// Optional (mod loading)
-		List<ModDependency> dependencies = new ArrayList<>();
-		V0ModMetadata.Mixins mixins = null;
-		ModEnvironment environment = ModEnvironment.UNIVERSAL; // Default is always universal
-		String initializer = null;
-		List<String> initializers = new ArrayList<>();
-
-		String name = null;
-		String description = null;
-		List<Person> authors = new ArrayList<>();
-		List<Person> contributors = new ArrayList<>();
-		ContactInformation links = null;
-		String license = null;
-
+	public static void parse(JsonReader reader, List<ParseWarning> warnings, ModMetadataBuilderImpl builder) throws IOException, ParseMetadataException {
 		while (reader.hasNext()) {
 			final String key = reader.nextName();
 
 			switch (key) {
 			case "schemaVersion":
-				// Duplicate field, make sure it matches our current schema version
-				if (reader.peek() != JsonToken.NUMBER) {
-					throw new ParseMetadataException("Duplicate \"schemaVersion\" field is not a number", reader);
-				}
-
-				final int read = reader.nextInt();
-
-				if (read != 0) {
-					throw new ParseMetadataException(String.format("Duplicate \"schemaVersion\" field does not match the predicted schema version of 0. Duplicate field value is %s", read), reader);
-				}
-
+				readSchemaVersion(reader, 0);
 				break;
 			case "id":
-				if (reader.peek() != JsonToken.STRING) {
-					throw new ParseMetadataException("Mod id must be a non-empty string with a length of 3-64 characters.", reader);
-				}
-
-				id = reader.nextString();
+				readModId(reader, builder);
 				break;
 			case "version":
-				if (reader.peek() != JsonToken.STRING) {
-					throw new ParseMetadataException("Version must be a non-empty string", reader);
-				}
-
-				final String rawVersion = reader.nextString();
-
-				try {
-					version = VersionParser.parse(rawVersion, false);
-				} catch (VersionParsingException e) {
-					throw new ParseMetadataException(String.format("Failed to parse version: %s", rawVersion), e);
-				}
-
+				readModVersion(reader, builder);
 				break;
 			case "requires":
-				readDependenciesContainer(reader, ModDependency.Kind.DEPENDS, dependencies, "requires");
+				readDependency(reader, ModDependency.Kind.DEPENDS, key, builder);
 				break;
 			case "conflicts":
-				readDependenciesContainer(reader, ModDependency.Kind.BREAKS, dependencies, "conflicts");
+				readDependency(reader, ModDependency.Kind.BREAKS, key, builder);
 				break;
 			case "mixins":
-				mixins = readMixins(warnings, reader);
+				readMixins(reader, warnings, builder);
 				break;
-			case "side":
+			case "side": {
 				if (reader.peek() != JsonToken.STRING) {
 					throw new ParseMetadataException("Side must be a string", reader);
 				}
@@ -118,35 +70,36 @@ final class V0ModMetadataParser {
 
 				switch (rawEnvironment) {
 				case "universal":
-					environment = ModEnvironment.UNIVERSAL;
+					builder.setEnvironment(ModEnvironment.UNIVERSAL);
 					break;
 				case "client":
-					environment = ModEnvironment.CLIENT;
+					builder.setEnvironment(ModEnvironment.CLIENT);
 					break;
 				case "server":
-					environment = ModEnvironment.SERVER;
+					builder.setEnvironment(ModEnvironment.SERVER);
 					break;
 				default:
-					warnings.add(new ParseWarning(reader.getLineNumber(), reader.getColumn(), rawEnvironment, "Invalid side type"));
+					warnings.add(new ParseWarning(reader, rawEnvironment, "Invalid side type"));
 				}
 
 				break;
+			}
 			case "initializer":
 				// `initializer` and `initializers` cannot be used at the same time
-				if (!initializers.isEmpty()) {
-					throw new ParseMetadataException("initializer and initializers should not be set at the same time! (mod ID '" + id + "')");
+				if (!builder.oldInitializers.isEmpty()) {
+					throw new ParseMetadataException("initializer and initializers should not be set at the same time! (mod ID '" + builder.getId() + "')");
 				}
 
 				if (reader.peek() != JsonToken.STRING) {
 					throw new ParseMetadataException("Initializer must be a non-empty string", reader);
 				}
 
-				initializer = reader.nextString();
+				builder.addOldInitializer(reader.nextString());
 				break;
 			case "initializers":
 				// `initializer` and `initializers` cannot be used at the same time
-				if (initializer != null) {
-					throw new ParseMetadataException("initializer and initializers should not be set at the same time! (mod ID '" + id + "')");
+				if (!builder.oldInitializers.isEmpty()) {
+					throw new ParseMetadataException("initializer and initializers should not be set at the same time! (mod ID '" + builder.getId() + "')");
 				}
 
 				if (reader.peek() != JsonToken.BEGIN_ARRAY) {
@@ -160,48 +113,40 @@ final class V0ModMetadataParser {
 						throw new ParseMetadataException("Initializer in initializers list must be a string", reader);
 					}
 
-					initializers.add(reader.nextString());
+					builder.addOldInitializer(reader.nextString());
 				}
 
 				reader.endArray();
 
 				break;
 			case "name":
-				if (reader.peek() != JsonToken.STRING) {
-					throw new ParseMetadataException("Name must be a string", reader);
-				}
-
-				name = reader.nextString();
+				readModName(reader, builder);
 				break;
 			case "description":
-				if (reader.peek() != JsonToken.STRING) {
-					throw new ParseMetadataException("Mod description must be a string", reader);
-				}
-
-				description = reader.nextString();
+				readModDescription(reader, builder);
 				break;
 			case "recommends":
-				readDependenciesContainer(reader, ModDependency.Kind.SUGGESTS, dependencies, "recommends");
+				readDependency(reader, ModDependency.Kind.RECOMMENDS, "recommends", builder);
 				break;
 			case "authors":
-				readPeople(warnings, reader, authors);
+				readPeople(reader, true, warnings, builder);
 				break;
 			case "contributors":
-				readPeople(warnings, reader, contributors);
+				readPeople(reader, false, warnings, builder);
 				break;
 			case "links":
-				links = readLinks(warnings, reader);
+				builder.setContact(readLinks(reader, warnings));
 				break;
 			case "license":
 				if (reader.peek() != JsonToken.STRING) {
 					throw new ParseMetadataException("License name must be a string", reader);
 				}
 
-				license = reader.nextString();
+				builder.addLicense(reader.nextString());
 				break;
 			default:
 				if (!ModMetadataParser.IGNORED_KEYS.contains(key)) {
-					warnings.add(new ParseWarning(reader.getLineNumber(), reader.getColumn(), key, "Unsupported root entry"));
+					warnings.add(new ParseWarning(reader, key, "Unsupported root entry"));
 				}
 
 				reader.skipValue();
@@ -209,26 +154,61 @@ final class V0ModMetadataParser {
 			}
 		}
 
-		// Validate all required fields are resolved
-		if (id == null) {
-			throw new ParseMetadataException.MissingField("id");
+		if (builder.getId() != null) {
+			builder.setIcon("assets/" + builder.getId() + "/icon.png");
 		}
-
-		if (version == null) {
-			throw new ParseMetadataException.MissingField("version");
-		}
-
-		ModMetadataParser.logWarningMessages(id, warnings);
-
-		// Optional stuff
-		if (links == null) {
-			links = ContactInformation.EMPTY;
-		}
-
-		return new V0ModMetadata(id, version, dependencies, mixins, environment, initializer, initializers, name, description, authors, contributors, links, license);
 	}
 
-	private static ContactInformation readLinks(List<ParseWarning> warnings, JsonReader reader) throws IOException, ParseMetadataException {
+	static void readSchemaVersion(JsonReader reader, int expected) throws IOException, ParseMetadataException {
+		// Duplicate field, make sure it matches our current schema version
+		if (reader.peek() != JsonToken.NUMBER) {
+			throw new ParseMetadataException("Duplicate \"schemaVersion\" field is not a number", reader);
+		}
+
+		final int read = reader.nextInt();
+
+		if (read != expected) {
+			throw new ParseMetadataException(String.format("Duplicate \"schemaVersion\" field does not match the predicted schema version of %d. Duplicate field value is %s", expected, read), reader);
+		}
+	}
+
+	static void readModId(JsonReader reader, ModMetadataBuilder builder) throws IOException, ParseMetadataException {
+		if (reader.peek() != JsonToken.STRING) {
+			throw new ParseMetadataException("Mod id must be a non-empty string with a length of 3-64 characters.", reader);
+		}
+
+		builder.setId(reader.nextString());
+	}
+
+	static void readModVersion(JsonReader reader, ModMetadataBuilder builder) throws IOException, ParseMetadataException {
+		if (reader.peek() != JsonToken.STRING) {
+			throw new ParseMetadataException("Version must be a non-empty string", reader);
+		}
+
+		try {
+			builder.setVersion(reader.nextString());
+		} catch (VersionParsingException e) {
+			throw new ParseMetadataException("Failed to parse version", e, reader);
+		}
+	}
+
+	static void readModName(JsonReader reader, ModMetadataBuilder builder) throws IOException, ParseMetadataException {
+		if (reader.peek() != JsonToken.STRING) {
+			throw new ParseMetadataException("Mod name must be a string", reader);
+		}
+
+		builder.setName(reader.nextString());
+	}
+
+	static void readModDescription(JsonReader reader, ModMetadataBuilder builder) throws IOException, ParseMetadataException {
+		if (reader.peek() != JsonToken.STRING) {
+			throw new ParseMetadataException("Mod description must be a string", reader);
+		}
+
+		builder.setDescription(reader.nextString());
+	}
+
+	private static ContactInformation readLinks(JsonReader reader, List<ParseWarning> warnings) throws IOException, ParseMetadataException {
 		final Map<String, String> contactInfo = new HashMap<>();
 
 		switch (reader.peek()) {
@@ -264,7 +244,7 @@ final class V0ModMetadataParser {
 					contactInfo.put("sources", reader.nextString());
 					break;
 				default:
-					warnings.add(new ParseWarning(reader.getLineNumber(), reader.getColumn(), key, "Unsupported links entry"));
+					warnings.add(new ParseWarning(reader, key, "Unsupported links entry"));
 					reader.skipValue();
 				}
 			}
@@ -278,11 +258,7 @@ final class V0ModMetadataParser {
 		return new ContactInformationImpl(contactInfo);
 	}
 
-	private static V0ModMetadata.Mixins readMixins(List<ParseWarning> warnings, JsonReader reader) throws IOException, ParseMetadataException {
-		final List<String> client = new ArrayList<>();
-		final List<String> common = new ArrayList<>();
-		final List<String> server = new ArrayList<>();
-
+	private static void readMixins(JsonReader reader, List<ParseWarning> warnings, ModMetadataBuilder builder) throws IOException, ParseMetadataException {
 		if (reader.peek() != JsonToken.BEGIN_OBJECT) {
 			throw new ParseMetadataException("Expected mixins to be an object.", reader);
 		}
@@ -290,55 +266,54 @@ final class V0ModMetadataParser {
 		reader.beginObject();
 
 		while (reader.hasNext()) {
-			final String environment = reader.nextName();
+			String envName = reader.nextName();
+			ModEnvironment env;
 
-			switch (environment) {
+			switch (envName) {
 			case "client":
-				client.addAll(readStringArray(reader, "client"));
+				env = ModEnvironment.CLIENT;
 				break;
 			case "common":
-				common.addAll(readStringArray(reader, "common"));
+				env = ModEnvironment.UNIVERSAL;
 				break;
 			case "server":
-				server.addAll(readStringArray(reader, "server"));
+				env = ModEnvironment.SERVER;
 				break;
 			default:
-				warnings.add(new ParseWarning(reader.getLineNumber(), reader.getColumn(), environment, "Invalid environment type"));
+				warnings.add(new ParseWarning(reader, envName, "Invalid environment type"));
 				reader.skipValue();
+				continue;
+			}
+
+			switch (reader.peek()) {
+			case NULL:
+				reader.nextNull();
+				break;
+			case STRING:
+				builder.addMixinConfig(reader.nextString(), env, null);
+				break;
+			case BEGIN_ARRAY:
+				reader.beginArray();
+
+				while (reader.hasNext()) {
+					if (reader.peek() != JsonToken.STRING) {
+						throw new ParseMetadataException(String.format("Expected entries in mixin %s to be an array of strings", envName), reader);
+					}
+
+					builder.addMixinConfig(reader.nextString(), env, null);
+				}
+
+				reader.endArray();
+				break;
+			default:
+				throw new ParseMetadataException(String.format("Expected mixin %s to be a string or an array of strings", envName), reader);
 			}
 		}
 
 		reader.endObject();
-		return new V0ModMetadata.Mixins(client, common, server);
 	}
 
-	private static List<String> readStringArray(JsonReader reader, String key) throws IOException, ParseMetadataException {
-		switch (reader.peek()) {
-		case NULL:
-			reader.nextNull();
-			return Collections.emptyList();
-		case STRING:
-			return Collections.singletonList(reader.nextString());
-		case BEGIN_ARRAY:
-			reader.beginArray();
-			final List<String> list = new ArrayList<>();
-
-			while (reader.hasNext()) {
-				if (reader.peek() != JsonToken.STRING) {
-					throw new ParseMetadataException(String.format("Expected entries in %s to be an array of strings", key), reader);
-				}
-
-				list.add(reader.nextString());
-			}
-
-			reader.endArray();
-			return list;
-		default:
-			throw new ParseMetadataException(String.format("Expected %s to be a string or an array of strings", key), reader);
-		}
-	}
-
-	private static void readDependenciesContainer(JsonReader reader, ModDependency.Kind kind, List<ModDependency> dependencies, String name) throws IOException, ParseMetadataException {
+	static void readDependency(JsonReader reader, ModDependency.Kind kind, String name, ModMetadataBuilder builder) throws IOException, ParseMetadataException {
 		if (reader.peek() != JsonToken.BEGIN_OBJECT) {
 			throw new ParseMetadataException(String.format("%s must be an object containing dependencies.", name), reader);
 		}
@@ -346,41 +321,40 @@ final class V0ModMetadataParser {
 		reader.beginObject();
 
 		while (reader.hasNext()) {
-			final String modId = reader.nextName();
-			final List<String> versionMatchers = new ArrayList<>();
+			ModDependencyBuilder depBuilder = ModDependencyBuilder.create(kind, reader.nextName());
+			depBuilder.setInferEnvironment(true);
+			readDependencyValue(reader, depBuilder);
 
-			switch (reader.peek()) {
-			case STRING:
-				versionMatchers.add(reader.nextString());
-				break;
-			case BEGIN_ARRAY:
-				reader.beginArray();
-
-				while (reader.hasNext()) {
-					if (reader.peek() != JsonToken.STRING) {
-						throw new ParseMetadataException("List of version requirements must be strings", reader);
-					}
-
-					versionMatchers.add(reader.nextString());
-				}
-
-				reader.endArray();
-				break;
-			default:
-				throw new ParseMetadataException("Expected version to be a string or array", reader);
-			}
-
-			try {
-				dependencies.add(new ModDependencyImpl(kind, modId, versionMatchers));
-			} catch (VersionParsingException e) {
-				throw new ParseMetadataException(e);
-			}
+			builder.addDependency(depBuilder.build());
 		}
 
 		reader.endObject();
 	}
 
-	private static void readPeople(List<ParseWarning> warnings, JsonReader reader, List<Person> people) throws IOException, ParseMetadataException {
+	static void readDependencyValue(JsonReader reader, ModDependencyBuilder builder) throws IOException, ParseMetadataException {
+		try {
+			switch (reader.peek()) {
+			case STRING:
+				builder.addVersion(reader.nextString());
+				break;
+			case BEGIN_ARRAY:
+				reader.beginArray();
+
+				while (reader.hasNext()) {
+					builder.addVersion(ParserUtil.readString(reader, "dependency version"));
+				}
+
+				reader.endArray();
+				break;
+			default:
+				throw new ParseMetadataException("Expected dependency version to be a string or array", reader);
+			}
+		} catch (VersionParsingException e) {
+			throw new ParseMetadataException(e, reader);
+		}
+	}
+
+	private static void readPeople(JsonReader reader, boolean isAuthor, List<ParseWarning> warnings, ModMetadataBuilder builder) throws IOException, ParseMetadataException {
 		if (reader.peek() != JsonToken.BEGIN_ARRAY) {
 			throw new ParseMetadataException("List of people must be an array", reader);
 		}
@@ -388,13 +362,19 @@ final class V0ModMetadataParser {
 		reader.beginArray();
 
 		while (reader.hasNext()) {
-			people.add(readPerson(warnings, reader));
+			Person person = readPerson(reader, warnings);
+
+			if (isAuthor) {
+				builder.addAuthor(person);
+			} else {
+				builder.addContributor(person);
+			}
 		}
 
 		reader.endArray();
 	}
 
-	private static Person readPerson(List<ParseWarning> warnings, JsonReader reader) throws IOException, ParseMetadataException {
+	private static Person readPerson(JsonReader reader, List<ParseWarning> warnings) throws IOException, ParseMetadataException {
 		final HashMap<String, String> contactMap = new HashMap<>();
 		String name = "";
 
@@ -449,7 +429,7 @@ final class V0ModMetadataParser {
 					contactMap.put("website", reader.nextString());
 					break;
 				default:
-					warnings.add(new ParseWarning(reader.getLineNumber(), reader.getColumn(), key, "Unsupported contact information entry"));
+					warnings.add(new ParseWarning(reader, key, "Unsupported contact information entry"));
 					reader.skipValue();
 				}
 			}

@@ -36,6 +36,7 @@ import java.util.jar.Manifest;
 
 import org.spongepowered.asm.launch.MixinBootstrap;
 import org.spongepowered.asm.mixin.MixinEnvironment;
+import org.spongepowered.asm.mixin.transformer.IMixinTransformer;
 import org.spongepowered.asm.mixin.transformer.Proxy;
 
 import net.minecraft.launchwrapper.IClassTransformer;
@@ -67,11 +68,6 @@ public abstract class FabricTweaker extends FabricLauncherBase implements ITweak
 
 	@SuppressWarnings("unchecked")
 	private final boolean isPrimaryTweaker = ((List<ITweaker>) Launch.blackboard.get("Tweaks")).isEmpty();
-
-	@Override
-	public String getEntrypoint() {
-		return getLaunchTarget();
-	}
 
 	@Override
 	public void acceptOptions(List<String> localArgs, File gameDir, File assetsDir, String profile) {
@@ -144,7 +140,7 @@ public abstract class FabricTweaker extends FabricLauncherBase implements ITweak
 
 		// Setup Mixin environment
 		MixinBootstrap.init();
-		FabricMixinBootstrap.init(getEnvironmentType(), FabricLoaderImpl.INSTANCE);
+		FabricMixinBootstrap.init(FabricLoaderImpl.INSTANCE);
 		MixinEnvironment.getDefaultEnvironment().setSide(getEnvironmentType() == EnvType.CLIENT ? MixinEnvironment.Side.CLIENT : MixinEnvironment.Side.SERVER);
 
 		provider.unlockClassPath(this);
@@ -159,6 +155,19 @@ public abstract class FabricTweaker extends FabricLauncherBase implements ITweak
 	@Override
 	public String[] getLaunchArguments() {
 		return isPrimaryTweaker ? FabricLoaderImpl.INSTANCE.getGameProvider().getLaunchArguments(false) : new String[0];
+	}
+
+
+	@Override
+	public String getEntrypoint() {
+		return getLaunchTarget();
+	}
+
+
+	@Override
+	public IMixinTransformer getMixinTransformer() {
+		// TODO Auto-generated method stub
+		return null;
 	}
 
 	@Override
@@ -207,7 +216,7 @@ public abstract class FabricTweaker extends FabricLauncherBase implements ITweak
 	}
 
 	@Override
-	public byte[] getClassByteArray(String name, boolean runTransformers) throws IOException {
+	public byte[] getClassByteArray(String name, boolean runTransformers, boolean allowEarlyAccess) throws IOException {
 		String transformedName = name.replace('/', '.');
 		byte[] classBytes = launchClassLoader.getClassBytes(name);
 

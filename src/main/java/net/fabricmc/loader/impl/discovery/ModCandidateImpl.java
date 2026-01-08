@@ -34,14 +34,17 @@ import java.util.zip.ZipFile;
 import java.util.zip.ZipInputStream;
 
 import net.fabricmc.loader.api.Version;
-import net.fabricmc.loader.api.metadata.ModDependency;
+import net.fabricmc.loader.api.extension.ModCandidate;
+import net.fabricmc.loader.api.metadata.ModLoadCondition;
+import net.fabricmc.loader.api.metadata.ProvidedMod;
 import net.fabricmc.loader.impl.game.GameProvider.BuiltinMod;
 import net.fabricmc.loader.impl.metadata.AbstractModMetadata;
 import net.fabricmc.loader.impl.metadata.DependencyOverrides;
 import net.fabricmc.loader.impl.metadata.LoaderModMetadata;
+import net.fabricmc.loader.impl.metadata.ModDependencyImpl;
 import net.fabricmc.loader.impl.metadata.VersionOverrides;
 
-public final class ModCandidateImpl implements DomainObject.Mod {
+public final class ModCandidateImpl implements ModCandidate, DomainObject.Mod {
 	static final Comparator<ModCandidateImpl> ID_VERSION_COMPARATOR = new Comparator<ModCandidateImpl>() {
 		@Override
 		public int compare(ModCandidateImpl a, ModCandidateImpl b) {
@@ -61,6 +64,7 @@ public final class ModCandidateImpl implements DomainObject.Mod {
 	private final Collection<ModCandidateImpl> parentMods;
 	private int minNestLevel;
 	private SoftReference<ByteBuffer> dataRef;
+	boolean enableGreedyLoad;
 
 	static ModCandidateImpl createBuiltin(BuiltinMod mod, VersionOverrides versionOverrides, DependencyOverrides depOverrides) {
 		LoaderModMetadata metadata = new BuiltinMetadataWrapper(mod.metadata);
@@ -70,7 +74,7 @@ public final class ModCandidateImpl implements DomainObject.Mod {
 		return new ModCandidateImpl(mod.paths, null, -1, metadata, false, Collections.emptyList());
 	}
 
-	static ModCandidateImpl createPlain(List<Path> paths, LoaderModMetadata metadata, boolean requiresRemap, Collection<ModCandidateImpl> nestedMods) {
+	public static ModCandidateImpl createPlain(List<Path> paths, LoaderModMetadata metadata, boolean requiresRemap, Collection<ModCandidateImpl> nestedMods) {
 		return new ModCandidateImpl(paths, null, -1, metadata, requiresRemap, nestedMods);
 	}
 
@@ -104,10 +108,12 @@ public final class ModCandidateImpl implements DomainObject.Mod {
 		return originPaths;
 	}
 
+	@Override
 	public boolean hasPath() {
 		return paths != null;
 	}
 
+	@Override
 	public List<Path> getPaths() {
 		if (paths == null) throw new IllegalStateException("no path set");
 
@@ -121,6 +127,7 @@ public final class ModCandidateImpl implements DomainObject.Mod {
 		clearCachedData();
 	}
 
+	@Override
 	public String getLocalPath() {
 		if (localPath != null) {
 			return localPath;
@@ -131,6 +138,7 @@ public final class ModCandidateImpl implements DomainObject.Mod {
 		}
 	}
 
+	@Override
 	public LoaderModMetadata getMetadata() {
 		return metadata;
 	}
@@ -145,8 +153,8 @@ public final class ModCandidateImpl implements DomainObject.Mod {
 		return metadata.getVersion();
 	}
 
-	public Collection<String> getProvides() {
-		return metadata.getProvides();
+	public Collection<? extends ProvidedMod> getAdditionallyProvidedMods() {
+		return metadata.getAdditionallyProvidedMods();
 	}
 
 	public boolean isBuiltin() {
@@ -154,10 +162,12 @@ public final class ModCandidateImpl implements DomainObject.Mod {
 	}
 
 	public ModLoadCondition getLoadCondition() {
+		if (metadata.getLoadCondition() != null) return metadata.getLoadCondition();
+
 		return minNestLevel == 0 ? ModLoadCondition.ALWAYS : ModLoadCondition.IF_POSSIBLE;
 	}
 
-	public Collection<ModDependency> getDependencies() {
+	public Collection<ModDependencyImpl> getDependencies() {
 		return metadata.getDependencies();
 	}
 
@@ -165,12 +175,14 @@ public final class ModCandidateImpl implements DomainObject.Mod {
 		return requiresRemap;
 	}
 
-	public Collection<ModCandidateImpl> getNestedMods() {
-		return nestedMods;
+	@Override
+	public Collection<ModCandidateImpl> getContainingMods() {
+		return parentMods;
 	}
 
-	public Collection<ModCandidateImpl> getParentMods() {
-		return parentMods;
+	@Override
+	public Collection<ModCandidateImpl> getContainedMods() {
+		return nestedMods;
 	}
 
 	boolean addParent(ModCandidateImpl parent) {
@@ -204,6 +216,7 @@ public final class ModCandidateImpl implements DomainObject.Mod {
 		return true;
 	}
 
+	@Override
 	public boolean isRoot() {
 		return minNestLevel == 0;
 	}

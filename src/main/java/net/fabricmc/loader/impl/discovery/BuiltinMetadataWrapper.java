@@ -26,25 +26,29 @@ import net.fabricmc.api.EnvType;
 import net.fabricmc.loader.api.Version;
 import net.fabricmc.loader.api.metadata.ContactInformation;
 import net.fabricmc.loader.api.metadata.CustomValue;
-import net.fabricmc.loader.api.metadata.ModDependency;
 import net.fabricmc.loader.api.metadata.ModEnvironment;
+import net.fabricmc.loader.api.metadata.ModLoadCondition;
 import net.fabricmc.loader.api.metadata.ModMetadata;
 import net.fabricmc.loader.api.metadata.Person;
+import net.fabricmc.loader.api.metadata.ProvidedMod;
 import net.fabricmc.loader.impl.metadata.AbstractModMetadata;
 import net.fabricmc.loader.impl.metadata.EntrypointMetadata;
 import net.fabricmc.loader.impl.metadata.LoaderModMetadata;
+import net.fabricmc.loader.impl.metadata.ModDependencyImpl;
 import net.fabricmc.loader.impl.metadata.NestedJarEntry;
+import net.fabricmc.loader.impl.util.Expression.DynamicFunction;
 
 class BuiltinMetadataWrapper extends AbstractModMetadata implements LoaderModMetadata {
 	private final ModMetadata parent;
 	private Version version;
-	private Collection<ModDependency> dependencies;
+	private Collection<ModDependencyImpl> dependencies;
 
+	@SuppressWarnings("unchecked")
 	BuiltinMetadataWrapper(ModMetadata parent) {
 		this.parent = parent;
 
 		version = parent.getVersion();
-		dependencies = parent.getDependencies();
+		dependencies = (Collection<ModDependencyImpl>) parent.getDependencies();
 	}
 
 	@Override
@@ -58,8 +62,8 @@ class BuiltinMetadataWrapper extends AbstractModMetadata implements LoaderModMet
 	}
 
 	@Override
-	public Collection<String> getProvides() {
-		return parent.getProvides();
+	public Collection<? extends ProvidedMod> getAdditionallyProvidedMods() {
+		return parent.getAdditionallyProvidedMods();
 	}
 
 	@Override
@@ -78,12 +82,22 @@ class BuiltinMetadataWrapper extends AbstractModMetadata implements LoaderModMet
 	}
 
 	@Override
-	public Collection<ModDependency> getDependencies() {
+	public ModLoadCondition getLoadCondition() {
+		return parent.getLoadCondition();
+	}
+
+	@Override
+	public String getLoadPhase() {
+		return LoadPhases.DEFAULT;
+	}
+
+	@Override
+	public Collection<ModDependencyImpl> getDependencies() {
 		return dependencies;
 	}
 
 	@Override
-	public void setDependencies(Collection<ModDependency> dependencies) {
+	public void setDependencies(Collection<ModDependencyImpl> dependencies) {
 		this.dependencies = Collections.unmodifiableCollection(dependencies);
 	}
 
@@ -153,13 +167,13 @@ class BuiltinMetadataWrapper extends AbstractModMetadata implements LoaderModMet
 	}
 
 	@Override
-	public Collection<String> getMixinConfigs(EnvType type) {
+	public Collection<String> getMixinConfigs(EnvType env, Map<String, DynamicFunction> expressionFunctions) {
 		return Collections.emptyList();
 	}
 
 	@Override
-	public String getClassTweaker() {
-		return null;
+	public Collection<String> getClassTweakers(EnvType env, Map<String, DynamicFunction> expressionFunctions) {
+		return Collections.emptyList();
 	}
 
 	@Override
@@ -181,7 +195,4 @@ class BuiltinMetadataWrapper extends AbstractModMetadata implements LoaderModMet
 	public Collection<String> getEntrypointKeys() {
 		return Collections.emptyList();
 	}
-
-	@Override
-	public void emitFormatWarnings() { }
 }

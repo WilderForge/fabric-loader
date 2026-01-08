@@ -37,6 +37,8 @@ import java.util.Set;
 import net.fabricmc.api.EnvType;
 import net.fabricmc.loader.api.ObjectShare;
 import net.fabricmc.loader.api.VersionParsingException;
+import net.fabricmc.loader.api.extension.ModMetadataBuilder.ModDependencyBuilder;
+import net.fabricmc.loader.api.extension.transform.ClassTransformer;
 import net.fabricmc.loader.api.metadata.ModDependency;
 import net.fabricmc.loader.impl.FabricLoaderImpl;
 import net.fabricmc.loader.impl.FormattedException;
@@ -47,11 +49,10 @@ import net.fabricmc.loader.impl.game.minecraft.patch.BrandingPatch;
 import net.fabricmc.loader.impl.game.minecraft.patch.EntrypointPatch;
 import net.fabricmc.loader.impl.game.minecraft.patch.EntrypointPatchFML125;
 import net.fabricmc.loader.impl.game.minecraft.patch.TinyFDPatch;
-import net.fabricmc.loader.impl.game.patch.GameTransformer;
 import net.fabricmc.loader.impl.launch.FabricLauncher;
 import net.fabricmc.loader.impl.launch.MappingConfiguration;
 import net.fabricmc.loader.impl.metadata.BuiltinModMetadata;
-import net.fabricmc.loader.impl.metadata.ModDependencyImpl;
+import net.fabricmc.loader.impl.transformer.ClassTransformHandler;
 import net.fabricmc.loader.impl.util.Arguments;
 import net.fabricmc.loader.impl.util.ExceptionUtil;
 import net.fabricmc.loader.impl.util.LoaderUtil;
@@ -88,12 +89,6 @@ public class MinecraftGameProvider implements GameProvider {
 	private McVersion versionData;
 	private boolean hasModLoader = false;
 
-	private final GameTransformer transformer = new GameTransformer(
-			new EntrypointPatch(this),
-			new BrandingPatch(),
-			new EntrypointPatchFML125(),
-			new TinyFDPatch());
-
 	@Override
 	public String getGameId() {
 		return "minecraft";
@@ -123,7 +118,9 @@ public class MinecraftGameProvider implements GameProvider {
 			int version = versionData.getClassVersion().getAsInt() - 44;
 
 			try {
-				metadata.addDependency(new ModDependencyImpl(ModDependency.Kind.DEPENDS, "java", Collections.singletonList(String.format(Locale.ENGLISH, ">=%d", version))));
+				metadata.addDependency(ModDependencyBuilder.create(ModDependency.Kind.DEPENDS, "java")
+						.addVersion(String.format(Locale.ENGLISH, ">=%d", version))
+						.build());
 			} catch (VersionParsingException e) {
 				throw new RuntimeException(e);
 			}
@@ -390,7 +387,11 @@ public class MinecraftGameProvider implements GameProvider {
 
 		setupLogHandler(launcher, true);
 
-		transformer.locateEntrypoints(launcher, gameJars);
+		ClassTransformer<?> entrypointPatch = EntrypointPatch.create(this);
+		if (entrypointPatch != null) ClassTransformHandler.addInternalTransformer(entrypointPatch);
+		ClassTransformHandler.addInternalTransformer(BrandingPatch.create());
+		ClassTransformHandler.addInternalTransformer(EntrypointPatchFML125.create());
+		ClassTransformHandler.addInternalTransformer(TinyFDPatch.create());
 	}
 
 	private void setupLogHandler(FabricLauncher launcher, boolean useTargetCl) {
@@ -453,11 +454,6 @@ public class MinecraftGameProvider implements GameProvider {
 		if (writeIdx < ret.length) ret = Arrays.copyOf(ret, writeIdx);
 
 		return ret;
-	}
-
-	@Override
-	public GameTransformer getEntrypointTransformer() {
-		return transformer;
 	}
 
 	@Override

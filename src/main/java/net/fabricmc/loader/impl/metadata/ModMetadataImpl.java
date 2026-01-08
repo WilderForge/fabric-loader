@@ -21,41 +21,44 @@ import java.util.Collection;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
+import java.util.NavigableMap;
 import java.util.Optional;
-import java.util.SortedMap;
 
 import net.fabricmc.api.EnvType;
 import net.fabricmc.loader.api.Version;
 import net.fabricmc.loader.api.metadata.ContactInformation;
 import net.fabricmc.loader.api.metadata.CustomValue;
-import net.fabricmc.loader.api.metadata.ModDependency;
 import net.fabricmc.loader.api.metadata.ModEnvironment;
+import net.fabricmc.loader.api.metadata.ModLoadCondition;
 import net.fabricmc.loader.api.metadata.Person;
-import net.fabricmc.loader.impl.util.log.Log;
-import net.fabricmc.loader.impl.util.log.LogCategory;
+import net.fabricmc.loader.api.metadata.ProvidedMod;
+import net.fabricmc.loader.impl.FabricLoaderImpl;
+import net.fabricmc.loader.impl.util.Expression;
+import net.fabricmc.loader.impl.util.Expression.DynamicFunction;
 
-final class V1ModMetadata extends AbstractModMetadata implements LoaderModMetadata {
+final class ModMetadataImpl extends AbstractModMetadata implements LoaderModMetadata {
 	static final IconEntry NO_ICON = size -> Optional.empty();
+
+	private final int schemaVersion;
 
 	// Required values
 	private final String id;
 	private Version version;
 
 	// Optional (id provides)
-	private final Collection<String> provides;
+	private final Collection<ProvidedModImpl> providedMods;
 
 	// Optional (mod loading)
 	private final ModEnvironment environment;
+	private final ModLoadCondition loadCondition;
+	private final String loadPhase;
 	private final Map<String, List<EntrypointMetadata>> entrypoints;
 	private final Collection<NestedJarEntry> jars;
-	private final Collection<MixinEntry> mixins;
-	/* @Nullable */
-	private final String classTweaker;
+	private final Collection<ConditionalConfigEntry> mixins;
+	private final Collection<ConditionalConfigEntry> classTweakers;
 
 	// Optional (dependency resolution)
-	private Collection<ModDependency> dependencies;
-	// Happy little accidents
-	private final boolean hasRequires;
+	private Collection<ModDependencyImpl> dependencies;
 
 	// Optional (metadata)
 	/* @Nullable */
@@ -73,24 +76,32 @@ final class V1ModMetadata extends AbstractModMetadata implements LoaderModMetada
 	// Optional (custom values)
 	private final Map<String, CustomValue> customValues;
 
-	V1ModMetadata(String id, Version version, Collection<String> provides,
-			ModEnvironment environment, Map<String, List<EntrypointMetadata>> entrypoints, Collection<NestedJarEntry> jars,
-			Collection<MixinEntry> mixins, /* @Nullable */ String classTweaker,
-			Collection<ModDependency> dependencies, boolean hasRequires,
+	// old (v0 metadata)
+	private final Collection<String> oldInitializers;
+
+	ModMetadataImpl(int schemaVersion,
+			String id, Version version, Collection<ProvidedModImpl> providedMods,
+			ModEnvironment environment, ModLoadCondition loadCondition, String loadPhase,
+			Map<String, List<EntrypointMetadata>> entrypoints, Collection<NestedJarEntry> jars,
+			Collection<ConditionalConfigEntry> mixins, Collection<ConditionalConfigEntry> classTweakers,
+			Collection<ModDependencyImpl> dependencies,
 			/* @Nullable */ String name, /* @Nullable */String description,
 			Collection<Person> authors, Collection<Person> contributors, /* @Nullable */ContactInformation contact, Collection<String> license, IconEntry icon,
 			Map<String, String> languageAdapters,
-			Map<String, CustomValue> customValues) {
+			Map<String, CustomValue> customValues,
+			Collection<String> oldInitializers) {
+		this.schemaVersion = schemaVersion;
 		this.id = id;
 		this.version = version;
-		this.provides = Collections.unmodifiableCollection(provides);
+		this.providedMods = unmodifiable(providedMods);
 		this.environment = environment;
-		this.entrypoints = Collections.unmodifiableMap(entrypoints);
-		this.jars = Collections.unmodifiableCollection(jars);
-		this.mixins = Collections.unmodifiableCollection(mixins);
-		this.classTweaker = classTweaker;
-		this.dependencies = Collections.unmodifiableCollection(dependencies);
-		this.hasRequires = hasRequires;
+		this.loadCondition = loadCondition;
+		this.loadPhase = loadPhase;
+		this.entrypoints = unmodifiable(entrypoints);
+		this.jars = unmodifiable(jars);
+		this.mixins = unmodifiable(mixins);
+		this.classTweakers = unmodifiable(classTweakers);
+		this.dependencies = unmodifiable(dependencies);
 		this.name = name;
 
 		// Empty description if not specified
@@ -100,8 +111,8 @@ final class V1ModMetadata extends AbstractModMetadata implements LoaderModMetada
 			this.description = "";
 		}
 
-		this.authors = Collections.unmodifiableCollection(authors);
-		this.contributors = Collections.unmodifiableCollection(contributors);
+		this.authors = unmodifiable(authors);
+		this.contributors = unmodifiable(contributors);
 
 		if (contact != null) {
 			this.contact = contact;
@@ -109,21 +120,31 @@ final class V1ModMetadata extends AbstractModMetadata implements LoaderModMetada
 			this.contact = ContactInformation.EMPTY;
 		}
 
-		this.license = Collections.unmodifiableCollection(license);
+		this.license = unmodifiable(license);
 
 		if (icon != null) {
 			this.icon = icon;
 		} else {
-			this.icon = V1ModMetadata.NO_ICON;
+			this.icon = NO_ICON;
 		}
 
-		this.languageAdapters = Collections.unmodifiableMap(languageAdapters);
-		this.customValues = Collections.unmodifiableMap(customValues);
+		this.languageAdapters = unmodifiable(languageAdapters);
+		this.customValues = unmodifiable(customValues);
+
+		this.oldInitializers = unmodifiable(oldInitializers);
+	}
+
+	private static <T> Collection<T> unmodifiable(Collection<? extends T> c) {
+		return c.isEmpty() ? Collections.emptyList() : Collections.unmodifiableCollection(c);
+	}
+
+	private static <K, V> Map<K, V> unmodifiable(Map<? extends K, ? extends V> m) {
+		return m.isEmpty() ? Collections.emptyMap() : Collections.unmodifiableMap(m);
 	}
 
 	@Override
 	public int getSchemaVersion() {
-		return 1;
+		return schemaVersion;
 	}
 
 	@Override
@@ -137,8 +158,8 @@ final class V1ModMetadata extends AbstractModMetadata implements LoaderModMetada
 	}
 
 	@Override
-	public Collection<String> getProvides() {
-		return this.provides;
+	public Collection<? extends ProvidedMod> getAdditionallyProvidedMods() {
+		return providedMods;
 	}
 
 	@Override
@@ -149,6 +170,10 @@ final class V1ModMetadata extends AbstractModMetadata implements LoaderModMetada
 	@Override
 	public void setVersion(Version version) {
 		this.version = version;
+
+		for (ProvidedModImpl m : providedMods) {
+			if (!m.hasOwnVersion) m.setVersion(version);
+		}
 	}
 
 	@Override
@@ -162,12 +187,22 @@ final class V1ModMetadata extends AbstractModMetadata implements LoaderModMetada
 	}
 
 	@Override
-	public Collection<ModDependency> getDependencies() {
+	public ModLoadCondition getLoadCondition() {
+		return loadCondition;
+	}
+
+	@Override
+	public String getLoadPhase() {
+		return loadPhase;
+	}
+
+	@Override
+	public Collection<ModDependencyImpl> getDependencies() {
 		return dependencies;
 	}
 
 	@Override
-	public void setDependencies(Collection<ModDependency> dependencies) {
+	public void setDependencies(Collection<ModDependencyImpl> dependencies) {
 		this.dependencies = Collections.unmodifiableCollection(dependencies);
 	}
 
@@ -230,27 +265,33 @@ final class V1ModMetadata extends AbstractModMetadata implements LoaderModMetada
 	}
 
 	@Override
-	public Collection<String> getMixinConfigs(EnvType type) {
-		final List<String> mixinConfigs = new ArrayList<>();
-
-		// This is only ever called once, so no need to store the result of this.
-		for (MixinEntry mixin : this.mixins) {
-			if (mixin.environment.matches(type)) {
-				mixinConfigs.add(mixin.config);
-			}
-		}
-
-		return mixinConfigs;
+	public Collection<String> getMixinConfigs(EnvType env, Map<String, DynamicFunction> expressionFunctions) {
+		return processConditionalConfigs("mixin", mixins, env, expressionFunctions);
 	}
 
 	@Override
-	public String getClassTweaker() {
-		return this.classTweaker;
+	public Collection<String> getClassTweakers(EnvType env, Map<String, DynamicFunction> expressionFunctions) {
+		return processConditionalConfigs("class tweaker", classTweakers, env, expressionFunctions);
+	}
+
+	private Collection<String> processConditionalConfigs(String name, Collection<ConditionalConfigEntry> entries,
+			EnvType type, Map<String, DynamicFunction> expressionFunctions) {
+		final List<String> ret = new ArrayList<>();
+
+		// This is only ever called once, so no need to store the result of this.
+		for (ConditionalConfigEntry entry : entries) {
+			if (entry.environment.matches(type)
+					&& !FabricLoaderImpl.isDisabled(entry.condition, false, expressionFunctions, name, getId())) {
+				ret.add(entry.config);
+			}
+		}
+
+		return ret;
 	}
 
 	@Override
 	public Collection<String> getOldInitializers() {
-		return Collections.emptyList(); // Not applicable in V1
+		return oldInitializers;
 	}
 
 	@Override
@@ -274,19 +315,61 @@ final class V1ModMetadata extends AbstractModMetadata implements LoaderModMetada
 	}
 
 	@Override
-	public void emitFormatWarnings() {
-		if (hasRequires) {
-			Log.warn(LogCategory.METADATA, "Mod `%s` (%s) uses 'requires' key in fabric.mod.json, which is not supported - use 'depends'", this.id, this.version);
+	public String toString() {
+		return String.format("%s %s", id, version);
+	}
+
+	static final class ProvidedModImpl implements ProvidedMod {
+		private final String id;
+		private Version version;
+		final boolean hasOwnVersion;
+		private final boolean exclusive;
+
+		ProvidedModImpl(String id, Version version, boolean hasOwnVersion, boolean exclusive) {
+			this.id = id;
+			this.version = version;
+			this.hasOwnVersion = hasOwnVersion;
+			this.exclusive = exclusive;
+		}
+
+		@Override
+		public String getId() {
+			return id;
+		}
+
+		@Override
+		public Version getVersion() {
+			return version;
+		}
+
+		void setVersion(Version version) {
+			this.version = version;
+		}
+
+		@Override
+		public boolean isExclusive() {
+			return exclusive;
+		}
+
+		@Override
+		public String toString() {
+			return String.format("%s %s (%s%s)",
+					id,
+					version,
+					(hasOwnVersion ? "" : "inherited, "),
+					(exclusive ? "exclusive" : "shared"));
 		}
 	}
 
 	static final class EntrypointMetadataImpl implements EntrypointMetadata {
 		private final String adapter;
 		private final String value;
+		private final Expression condition;
 
-		EntrypointMetadataImpl(String adapter, String value) {
+		EntrypointMetadataImpl(String adapter, String value, Expression condition) {
 			this.adapter = adapter;
 			this.value = value;
+			this.condition = condition;
 		}
 
 		@Override
@@ -298,12 +381,17 @@ final class V1ModMetadata extends AbstractModMetadata implements LoaderModMetada
 		public String getValue() {
 			return this.value;
 		}
+
+		@Override
+		public Expression getCondition() {
+			return condition;
+		}
 	}
 
-	static final class JarEntry implements NestedJarEntry {
+	static final class NestedJarEntryImpl implements NestedJarEntry {
 		private final String file;
 
-		JarEntry(String file) {
+		NestedJarEntryImpl(String file) {
 			this.file = file;
 		}
 
@@ -313,13 +401,15 @@ final class V1ModMetadata extends AbstractModMetadata implements LoaderModMetada
 		}
 	}
 
-	static final class MixinEntry {
-		private final String config;
-		private final ModEnvironment environment;
+	static final class ConditionalConfigEntry {
+		final String config;
+		final ModEnvironment environment;
+		final Expression condition;
 
-		MixinEntry(String config, ModEnvironment environment) {
+		ConditionalConfigEntry(String config, ModEnvironment environment, Expression condition) {
 			this.config = config;
 			this.environment = environment;
+			this.condition = condition;
 		}
 	}
 
@@ -327,10 +417,10 @@ final class V1ModMetadata extends AbstractModMetadata implements LoaderModMetada
 		Optional<String> getIconPath(int size);
 	}
 
-	static final class Single implements IconEntry {
+	static final class SingleIconEntry implements IconEntry {
 		private final String icon;
 
-		Single(String icon) {
+		SingleIconEntry(String icon) {
 			this.icon = icon;
 		}
 
@@ -340,26 +430,21 @@ final class V1ModMetadata extends AbstractModMetadata implements LoaderModMetada
 		}
 	}
 
-	static final class MapEntry implements IconEntry {
-		private final SortedMap<Integer, String> icons;
+	static final class MapIconEntry implements IconEntry {
+		private final NavigableMap<Integer, String> icons;
 
-		MapEntry(SortedMap<Integer, String> icons) {
+		MapIconEntry(NavigableMap<Integer, String> icons) {
 			this.icons = icons;
 		}
 
 		@Override
 		public Optional<String> getIconPath(int size) {
-			int iconValue = -1;
+			if (icons.isEmpty()) return Optional.empty();
 
-			for (int i : icons.keySet()) {
-				iconValue = i;
+			Map.Entry<Integer, String> entry = icons.ceilingEntry(size);
+			if (entry == null) entry = icons.lastEntry();
 
-				if (iconValue >= size) {
-					break;
-				}
-			}
-
-			return Optional.of(icons.get(iconValue));
+			return Optional.of(entry.getValue());
 		}
 	}
 }

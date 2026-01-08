@@ -19,8 +19,12 @@ package net.fabricmc.loader.impl.discovery;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashMap;
+import java.util.HashSet;
+import java.util.IdentityHashMap;
+import java.util.Iterator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -32,17 +36,28 @@ import org.sat4j.specs.ContradictionException;
 import org.sat4j.specs.TimeoutException;
 
 import net.fabricmc.api.EnvType;
+import net.fabricmc.loader.api.Version;
+import net.fabricmc.loader.api.extension.ModCandidate;
 import net.fabricmc.loader.api.metadata.ModDependency;
 import net.fabricmc.loader.api.metadata.ModDependency.Kind;
+import net.fabricmc.loader.api.metadata.ProvidedMod;
 import net.fabricmc.loader.impl.discovery.ModSolver.InactiveReason;
 import net.fabricmc.loader.impl.metadata.ModDependencyImpl;
+import net.fabricmc.loader.impl.util.Expression.DynamicFunction;
+import net.fabricmc.loader.impl.util.Expression.ExpressionEvaluateException;
+import net.fabricmc.loader.impl.util.ExpressionFunctions;
+import net.fabricmc.loader.impl.util.PhaseSorting;
 import net.fabricmc.loader.impl.util.log.Log;
 import net.fabricmc.loader.impl.util.log.LogCategory;
+import net.fabricmc.loader.impl.util.log.LogLevel;
 
 public class ModResolver {
-	public static List<ModCandidateImpl> resolve(Collection<ModCandidateImpl> candidates, EnvType envType, Map<String, Set<ModCandidateImpl>> envDisabledMods) throws ModResolutionException {
+	private static final boolean LOG_VERBOSE = Log.shouldLog(LogLevel.DEBUG, LogCategory.RESOLUTION);
+
+	public static List<ModCandidateImpl> resolve(ResolutionContext context) throws ModResolutionException {
 		long startTime = System.nanoTime();
-		List<ModCandidateImpl> result = findCompatibleSet(candidates, envType, envDisabledMods);
+
+		List<ModCandidateImpl> result = findCompatibleSet(context);
 
 		long endTime = System.nanoTime();
 		Log.debug(LogCategory.RESOLUTION, "Mod resolution time: %.1f ms", (endTime - startTime) * 1e-6);
@@ -50,42 +65,16 @@ public class ModResolver {
 		return result;
 	}
 
-	private static List<ModCandidateImpl> findCompatibleSet(Collection<ModCandidateImpl> candidates, EnvType envType, Map<String, Set<ModCandidateImpl>> envDisabledMods) throws ModResolutionException {
-		// sort all mods by priority and group by id
+	private static List<ModCandidateImpl> findCompatibleSet(ResolutionContext context) throws ModResolutionException {
+		if (LOG_VERBOSE) Log.debug(LogCategory.RESOLUTION, "Starting resolution with %d mods: %s", context.initialMods.size(), context.initialMods);
 
-		List<ModCandidateImpl> allModsSorted = new ArrayList<>(candidates);
-		Map<String, List<ModCandidateImpl>> modsById = new LinkedHashMap<>(); // linked to ensure consistent execution
-
-		ModPrioSorter.sort(allModsSorted, modsById);
-
-		// soften positive deps from schema 0 or 1 mods on mods that are present but disabled for the current env
-		// this is a workaround necessary due to many mods declaring deps that are unsatisfiable in some envs and loader before 0.12x not verifying them properly
-
-		for (ModCandidateImpl mod : allModsSorted) {
-			if (mod.getMetadata().getSchemaVersion() >= 2) continue;
-
-			for (ModDependency dep : mod.getMetadata().getDependencies()) {
-				if (!dep.getKind().isPositive() || dep.getKind() == Kind.SUGGESTS) continue; // no positive dep or already suggests
-				if (!(dep instanceof ModDependencyImpl)) continue; // can't modify dep kind
-				if (modsById.containsKey(dep.getModId())) continue; // non-disabled match available
-
-				Collection<ModCandidateImpl> disabledMatches = envDisabledMods.get(dep.getModId());
-				if (disabledMatches == null) continue; // no disabled id matches
-
-				for (ModCandidateImpl m : disabledMatches) {
-					if (dep.matches(m.getVersion())) { // disabled version match -> remove dep
-						((ModDependencyImpl) dep).setKind(Kind.SUGGESTS);
-						break;
-					}
-				}
-			}
-		}
+		addMods(context.initialMods, context);
 
 		// preselect mods, check for builtin mod collisions
 
 		List<ModCandidateImpl> preselectedMods = new ArrayList<>();
 
-		for (List<ModCandidateImpl> mods : modsById.values()) {
+		for (List<ModCandidateImpl> mods : context.modsById.values()) {
 			ModCandidateImpl builtinMod = null;
 
 			for (ModCandidateImpl mod : mods) {
@@ -105,69 +94,148 @@ public class ModResolver {
 			preselectedMods.add(builtinMod);
 		}
 
-		Map<String, ModCandidateImpl> selectedMods = new HashMap<>(allModsSorted.size());
-		List<ModCandidateImpl> uniqueSelectedMods = new ArrayList<>(allModsSorted.size());
-
 		for (ModCandidateImpl mod : preselectedMods) {
-			preselectMod(mod, allModsSorted, modsById, selectedMods, uniqueSelectedMods);
+			selectMod(mod, context);
+		}
+
+		if (LOG_VERBOSE) Log.debug(LogCategory.RESOLUTION, "Preselected %d mods: %s", preselectedMods.size(), preselectedMods);
+
+		// phase sorting
+
+		PhaseSorting<String, ModCandidateImpl> sorting = new PhaseSorting<>();
+		LoadPhases.setDefaultOrder(sorting);
+
+		for (ModCandidateImpl mod : context.allModsSorted) {
+			sorting.add(mod.getMetadata().getLoadPhase(), mod);
 		}
 
 		// solve
 
-		ModSolver.Result result;
+		Iterator<String> phaseIterator = sorting.getUsedPhases().iterator();
+		boolean advancePhase = true;
+		String phase = null;
 
-		try {
-			result = ModSolver.solve(allModsSorted, modsById,
-					selectedMods, uniqueSelectedMods);
-		} catch (ContradictionException | TimeoutException e) {
-			throw new ModResolutionException("Solving failed", e);
-		}
+		while (!context.allModsSorted.isEmpty()) {
+			if (advancePhase) {
+				if (!phaseIterator.hasNext()) break;
 
-		if (!result.success) {
-			Log.warn(LogCategory.RESOLUTION, "Mod resolution failed");
-			Log.info(LogCategory.RESOLUTION, "Immediate reason: %s%n", result.immediateReason);
-			Log.info(LogCategory.RESOLUTION, "Reason: %s%n", result.reason);
-			if (!envDisabledMods.isEmpty()) Log.info(LogCategory.RESOLUTION, "%s environment disabled: %s%n", envType.name(), envDisabledMods.keySet());
+				phase = phaseIterator.next();
 
-			if (result.fix == null) {
-				Log.info(LogCategory.RESOLUTION, "No fix?");
-			} else {
-				Log.info(LogCategory.RESOLUTION, "Fix: add %s, remove %s, replace [%s]%n",
-						result.fix.modsToAdd,
-						result.fix.modsToRemove,
-						result.fix.modReplacements.entrySet().stream().map(e -> String.format("%s -> %s", e.getValue(), e.getKey())).collect(Collectors.joining(", ")));
-
-				for (Collection<ModCandidateImpl> mods : envDisabledMods.values()) {
-					for (ModCandidateImpl m : mods) {
-						result.fix.inactiveMods.put(m, InactiveReason.WRONG_ENVIRONMENT);
-					}
+				for (ModCandidateImpl mod : sorting.get(phase)) {
+					mod.enableGreedyLoad = true;
 				}
 			}
 
-			throw new ModResolutionException("Some of your mods are incompatible with the game or each other!%s",
-					ResultAnalyzer.gatherErrors(result, selectedMods, modsById, envDisabledMods, envType));
+			if (LOG_VERBOSE) {
+				List<ModCandidateImpl> mod = context.allModsSorted.stream().filter(m -> m.enableGreedyLoad).collect(Collectors.toList());
+				Log.debug(LogCategory.RESOLUTION, "Phase %s: %d mods: %s", phase, mod.size(), mod);
+			}
+
+			ModSolver.Result result;
+
+			try {
+				result = ModSolver.solve(context);
+			} catch (ContradictionException | TimeoutException e) {
+				throw new ModResolutionException("Solving failed", e);
+			}
+
+			if (!result.success) {
+				Log.warn(LogCategory.RESOLUTION, "Mod resolution failed");
+				Log.info(LogCategory.RESOLUTION, "Immediate reason: %s%n", result.immediateReason);
+				Log.info(LogCategory.RESOLUTION, "Reason: %s%n", result.reason);
+				if (!context.envDisabledMods.isEmpty()) Log.info(LogCategory.RESOLUTION, "%s environment disabled: %s%n", context.envType.name(), context.envDisabledMods.keySet());
+
+				if (result.fix == null) {
+					Log.info(LogCategory.RESOLUTION, "No fix?");
+				} else {
+					Log.info(LogCategory.RESOLUTION, "Fix: add %s, remove %s, replace [%s]%n",
+							result.fix.modsToAdd,
+							result.fix.modsToRemove,
+							result.fix.modReplacements.entrySet().stream().map(e -> String.format("%s -> %s", e.getValue(), e.getKey())).collect(Collectors.joining(", ")));
+
+					for (Collection<ModCandidateImpl> mods : context.envDisabledMods.values()) {
+						for (ModCandidateImpl m : mods) {
+							result.fix.inactiveMods.put(m, InactiveReason.WRONG_ENVIRONMENT);
+						}
+					}
+				}
+
+				throw new ModResolutionException("Mod resolution encountered an incompatible mod set!%s",
+						ResultAnalyzer.gatherErrors(result, context));
+			}
+
+			if (!context.currentSelectedMods.isEmpty()) {
+				if (LOG_VERBOSE) Log.debug(LogCategory.RESOLUTION, "selected %d mods: %s", context.currentSelectedMods.size(), context.currentSelectedMods);
+				if (context.phaseSelectHandler != null) context.phaseSelectHandler.onSelect(context.currentSelectedMods, phase, context);
+				context.currentSelectedMods.clear();
+			} else {
+				if (LOG_VERBOSE) Log.debug(LogCategory.RESOLUTION, "no mods selected");
+			}
+
+			if (context.addedMods.isEmpty()) {
+				advancePhase = true;
+			} else {
+				addMods(context.addedMods, context);
+
+				Set<String> addedPhases = new HashSet<>();
+
+				for (ModCandidateImpl mod : context.addedMods) {
+					String modPhase = mod.getMetadata().getLoadPhase();
+					sorting.add(modPhase, mod);
+					addedPhases.add(modPhase);
+				}
+
+				int addedPhaseCount = addedPhases.size();
+
+				// remove phases that aren't beyond the current phase
+				addedPhases.remove(phase);
+
+				if (!addedPhases.isEmpty()) {
+					int idx = sorting.getPhaseIndex(phase);
+
+					for (Iterator<String> it = addedPhases.iterator(); it.hasNext(); ) {
+						if (sorting.getPhaseIndex(it.next()) <= idx) it.remove();
+					}
+				}
+
+				advancePhase = addedPhases.size() == addedPhaseCount; // all added mods use phases beyond the current phase
+
+				if (!advancePhase) {
+					for (ModCandidateImpl mod : context.addedMods) {
+						if (!addedPhases.contains(mod.getMetadata().getLoadPhase())) {
+							mod.enableGreedyLoad = true;
+						}
+					}
+				}
+
+				// reset iterator since it's likely invalid
+				phaseIterator = sorting.getUsedPhases().iterator();
+				while (!phaseIterator.next().equals(phase)) { }
+
+				context.addedMods.clear();
+			}
 		}
 
-		uniqueSelectedMods.sort(Comparator.comparing(ModCandidateImpl::getId));
+		context.uniqueSelectedMods.sort(Comparator.comparing(ModCandidateImpl::getId));
 
 		// clear cached data and inbound refs for unused mods, set minNestLevel for used non-root mods to max, queue root mods
 
 		Queue<ModCandidateImpl> queue = new ArrayDeque<>();
 
-		for (ModCandidateImpl mod : allModsSorted) {
-			if (selectedMods.get(mod.getId()) == mod) { // mod is selected
+		for (ModCandidateImpl mod : context.allModsSorted) {
+			if (context.selectedMods.get(mod.getId()) == mod) { // mod is selected
 				if (!mod.resetMinNestLevel()) { // -> is root
 					queue.add(mod);
 				}
 			} else {
 				mod.clearCachedData();
 
-				for (ModCandidateImpl m : mod.getNestedMods()) {
-					m.getParentMods().remove(mod);
+				for (ModCandidateImpl m : mod.getContainedMods()) {
+					m.getContainingMods().remove(mod);
 				}
 
-				for (ModCandidateImpl m : mod.getParentMods()) {
-					m.getNestedMods().remove(mod);
+				for (ModCandidateImpl m : mod.getContainingMods()) {
+					m.getContainedMods().remove(mod);
 				}
 			}
 		}
@@ -178,7 +246,7 @@ public class ModResolver {
 			ModCandidateImpl mod;
 
 			while ((mod = queue.poll()) != null) {
-				for (ModCandidateImpl child : mod.getNestedMods()) {
+				for (ModCandidateImpl child : mod.getContainedMods()) {
 					if (child.updateMinNestLevel(mod)) {
 						queue.add(child);
 					}
@@ -186,36 +254,263 @@ public class ModResolver {
 			}
 		}
 
-		String warnings = ResultAnalyzer.gatherWarnings(uniqueSelectedMods, selectedMods,
-				envDisabledMods, envType);
+		String warnings = ResultAnalyzer.gatherWarnings(context);
 
 		if (warnings != null) {
 			Log.warn(LogCategory.RESOLUTION, "Warnings were found!%s", warnings);
 		}
 
-		return uniqueSelectedMods;
+		return context.uniqueSelectedMods;
 	}
 
-	static void preselectMod(ModCandidateImpl mod, List<ModCandidateImpl> allModsSorted, Map<String, List<ModCandidateImpl>> modsById,
-			Map<String, ModCandidateImpl> selectedMods, List<ModCandidateImpl> uniqueSelectedMods) throws ModResolutionException {
-		selectMod(mod, selectedMods, uniqueSelectedMods);
+	private static void addMods(Collection<ModCandidateImpl> mods, ResolutionContext context) {
+		context.allModsSorted.addAll(mods);
 
-		allModsSorted.removeAll(modsById.remove(mod.getId()));
+		// sort all mods by priority and group by id
 
-		for (String provided : mod.getProvides()) {
-			allModsSorted.removeAll(modsById.remove(provided));
+		ModPrioSorter.sort(context.allModsSorted, context.modsById);
+
+		// soften positive deps from schema 0 or 1 mods on mods that are present but disabled for the current env
+		// this is a workaround necessary due to many mods declaring deps that are unsatisfiable in some envs and loader before 0.12x not verifying them properly
+
+		for (ModCandidateImpl mod : mods) {
+			for (ModDependencyImpl dep : mod.getDependencies()) {
+				if (!dep.isInferEnvironment()) continue;
+				if (!dep.getKind().isPositive() || dep.getKind() == Kind.SUGGESTS) continue; // no positive dep or already suggests
+				if (context.modsById.containsKey(dep.getModId())) continue; // non-disabled match available
+
+				Collection<ModCandidateImpl> disabledMatches = context.envDisabledMods.get(dep.getModId());
+				if (disabledMatches == null) continue; // no disabled id matches
+
+				for (ModCandidateImpl m : disabledMatches) {
+					if (depMatches(dep, m)) { // disabled version match -> remove dep
+						dep.setKind(Kind.SUGGESTS);
+						break;
+					}
+				}
+			}
 		}
 	}
 
-	static void selectMod(ModCandidateImpl mod, Map<String, ModCandidateImpl> selectedMods, List<ModCandidateImpl> uniqueSelectedMods) throws ModResolutionException {
-		ModCandidateImpl prev = selectedMods.put(mod.getId(), mod);
-		if (prev != null) throw new ModResolutionException("duplicate mod %s", mod.getId());
+	static boolean depMatches(ModDependency dep, ModCandidateImpl mod) {
+		String id = dep.getModId();
+		Version version;
 
-		for (String provided : mod.getProvides()) {
-			prev = selectedMods.put(provided, mod);
-			if (prev != null) throw new ModResolutionException("duplicate mod %s", provided);
+		if (id.equals(mod.getId())) {
+			version = mod.getVersion();
+		} else {
+			version = null;
+
+			for (ProvidedMod m : mod.getAdditionallyProvidedMods()) {
+				if (id.equals(m.getId())) {
+					version = m.getVersion();
+					break;
+				}
+			}
+
+			if (version == null) return false;
 		}
 
-		uniqueSelectedMods.add(mod);
+		return dep.matches(version);
+	}
+
+	static void selectMod(ModCandidateImpl mod, ResolutionContext context) throws ModResolutionException {
+		ModCandidateImpl prev = context.selectedMods.put(mod.getId(), mod);
+		if (prev != null && hasExclusiveId(prev, mod.getId())) throw new ModResolutionException("duplicate mod %s", mod.getId());
+
+		for (ProvidedMod provided : mod.getAdditionallyProvidedMods()) {
+			String id = provided.getId();
+
+			if (provided.isExclusive()) {
+				prev = context.selectedMods.put(id, mod);
+				if (prev != null && hasExclusiveId(prev, id)) throw new ModResolutionException("duplicate provided mod %s by %s and %s", id, mod, prev);
+			} else {
+				prev = context.selectedMods.putIfAbsent(id, mod);
+			}
+		}
+
+		context.uniqueSelectedMods.add(mod);
+		context.currentSelectedMods.add(mod);
+
+		// remove from allModsSorted and modsById
+
+		context.allModsSorted.removeAll(context.modsById.remove(mod.getId()));
+
+		for (ProvidedMod provided : mod.getAdditionallyProvidedMods()) {
+			String id = provided.getId();
+
+			if (provided.isExclusive()) {
+				context.allModsSorted.removeAll(context.modsById.remove(id));
+			} else {
+				List<ModCandidateImpl> mods = context.modsById.get(id);
+				mods.remove(mod);
+				context.allModsSorted.remove(mod);
+
+				for (Iterator<ModCandidateImpl> it = mods.iterator(); it.hasNext(); ) {
+					ModCandidateImpl m = it.next();
+
+					if (!hasExclusiveId(m, id)) {
+						it.remove();
+						context.allModsSorted.remove(m);
+					}
+				}
+
+				if (mods.isEmpty()) context.modsById.remove(id);
+			}
+		}
+	}
+
+	static boolean hasExclusiveId(ModCandidateImpl mod, String id) {
+		if (mod.getId().equals(id)) return true;
+
+		for (ProvidedMod provided : mod.getAdditionallyProvidedMods()) {
+			if (provided.isExclusive() && provided.getId().equals(id)) return true;
+		}
+
+		return false;
+	}
+
+	public static final class ResolutionContext {
+		final Collection<ModCandidateImpl> initialMods;
+		public final EnvType envType;
+		public final Map<String, DynamicFunction> expressionFunctions;
+		final Map<String, Set<ModCandidateImpl>> envDisabledMods;
+		final PhaseSelectHandler phaseSelectHandler;
+
+		final List<ModCandidateImpl> allModsSorted;
+		final Map<String, List<ModCandidateImpl>> modsById = new LinkedHashMap<>(); // linked to ensure consistent execution
+		final Map<String, ModCandidateImpl> selectedMods;
+		final List<ModCandidateImpl> uniqueSelectedMods;
+
+		final List<ModCandidateImpl> addedMods = new ArrayList<>();
+		final List<ModCandidateImpl> currentSelectedMods = new ArrayList<>();
+
+		public ResolutionContext(Collection<ModCandidateImpl> candidates,
+				EnvType envType, Map<String, DynamicFunction> expressionFunctions,
+				Map<String, Set<ModCandidateImpl>> envDisabledMods,
+				PhaseSelectHandler phaseSelectHandler) {
+			this.initialMods = candidates;
+			this.envType = envType;
+			this.expressionFunctions = expressionFunctions;
+			this.envDisabledMods = envDisabledMods;
+			this.phaseSelectHandler = phaseSelectHandler;
+
+			this.allModsSorted = new ArrayList<>(candidates.size());
+			this.selectedMods = new HashMap<>(candidates.size());
+			this.uniqueSelectedMods = new ArrayList<>(candidates.size());
+
+			expressionFunctions.put("mod", new DynamicFunction() {
+				@Override
+				public Object evaluate(Object... args) throws ExpressionEvaluateException {
+					ExpressionFunctions.checkString1(args);
+
+					return selectedMods.containsKey(args[0]) ? true : null;
+				}
+			});
+		}
+
+		public Collection<ModCandidateImpl> getMods(String id) {
+			List<ModCandidateImpl> ret = new ArrayList<>();
+			ret.addAll(modsById.getOrDefault(id, Collections.emptyList()));
+			ModCandidateImpl mod = selectedMods.get(id);
+			if (mod != null) ret.add(mod);
+
+			for (ModCandidateImpl m : addedMods) {
+				if (m.getId().equals(id)) ret.add(m);
+			}
+
+			return ret;
+		}
+
+		public Collection<ModCandidateImpl> getMods() {
+			List<ModCandidateImpl> ret = new ArrayList<>(allModsSorted.size() + uniqueSelectedMods.size() + addedMods.size());
+			ret.addAll(allModsSorted);
+			ret.addAll(uniqueSelectedMods);
+			ret.addAll(addedMods);
+
+			return ret;
+		}
+
+		public boolean addMod(ModCandidateImpl mod) {
+			for (ModCandidateImpl m : modsById.getOrDefault(mod.getId(), Collections.emptyList())) {
+				if (m == mod || m.getVersion().equals(mod.getVersion())) {
+					return false;
+				}
+			}
+
+			if (selectedMods.containsKey(mod.getId())) return false;
+
+			for (ModCandidateImpl m : addedMods) {
+				if (m == mod || m.getId().equals(mod.getId()) && m.getVersion().equals(mod.getVersion())) {
+					return false;
+				}
+			}
+
+			addedMods.add(mod);
+
+			for (ModCandidate m : mod.getContainedMods()) {
+				addMod((ModCandidateImpl) m);
+			}
+
+			return true;
+		}
+
+		public boolean removeMod(ModCandidateImpl mod) {
+			if (selectedMods.get(mod.getId()) == mod) return false; // already loaded
+
+			if (!mod.getContainedMods().isEmpty()) { // also remove all mods that'd become orphaned (check if possible first, then apply)
+				Set<ModCandidateImpl> modsToRemove = Collections.newSetFromMap(new IdentityHashMap<>());
+				modsToRemove.add(mod);
+				Queue<ModCandidateImpl> queue = new ArrayDeque<>();
+				ModCandidateImpl parent = mod;
+
+				do {
+					for (ModCandidateImpl m : parent.getContainedMods()) {
+						if ((m.getContainingMods().size() == 1 || modsToRemove.containsAll(m.getContainingMods())) // orphaned
+								&& modsToRemove.add(m)) {
+							if (selectedMods.get(m.getId()) == m) return false;
+							queue.add(m);
+						}
+					}
+				} while ((parent = queue.poll()) != null);
+
+				for (ModCandidateImpl m : modsToRemove) {
+					if (m != mod) removeMod0(m);
+				}
+			}
+
+			return removeMod0(mod);
+		}
+
+		private boolean removeMod0(ModCandidateImpl mod) {
+			String id = mod.getId();
+			List<ModCandidateImpl> mods = modsById.get(id);
+			boolean removed = mods != null && mods.remove(mod) // remove from candidates
+					|| addedMods.remove(mod); // remove from pending additions if not already in candidates
+
+			if (removed) {
+				// remove parent refs
+				for (ModCandidateImpl m : mod.getContainingMods()) {
+					m.getContainedMods().remove(mod);
+				}
+
+				// remove child refs
+				for (ModCandidateImpl m : mod.getContainedMods()) {
+					m.getContainingMods().remove(mod);
+				}
+
+				// remove from sorted candidate list
+				allModsSorted.remove(mod);
+
+				// discard empty by-id refs
+				if (mods.isEmpty()) modsById.remove(id);
+			}
+
+			return removed;
+		}
+	}
+
+	public interface PhaseSelectHandler {
+		void onSelect(List<ModCandidateImpl> mods, String phase, ResolutionContext context);
 	}
 }

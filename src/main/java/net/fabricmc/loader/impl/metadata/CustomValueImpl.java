@@ -29,7 +29,7 @@ import java.util.Objects;
 import net.fabricmc.loader.api.metadata.CustomValue;
 import net.fabricmc.loader.impl.lib.gson.JsonReader;
 
-abstract class CustomValueImpl implements CustomValue {
+public abstract class CustomValueImpl implements CustomValue {
 	static final CustomValue BOOLEAN_TRUE = new BooleanImpl(true);
 	static final CustomValue BOOLEAN_FALSE = new BooleanImpl(false);
 	static final CustomValue NULL = new NullImpl();
@@ -48,7 +48,7 @@ abstract class CustomValueImpl implements CustomValue {
 
 			reader.endObject();
 
-			return new ObjectImpl(values);
+			return of(values);
 		case BEGIN_ARRAY:
 			reader.beginArray();
 
@@ -60,24 +60,48 @@ abstract class CustomValueImpl implements CustomValue {
 
 			reader.endArray();
 
-			return new ArrayImpl(entries);
+			return of(entries);
 		case STRING:
-			return new StringImpl(reader.nextString());
+			return of(reader.nextString());
 		case NUMBER:
 			// TODO: Parse this somewhat more smartly?
-			return new NumberImpl(reader.nextDouble());
+			return of(reader.nextDouble());
 		case BOOLEAN:
-			if (reader.nextBoolean()) {
-				return BOOLEAN_TRUE;
-			}
-
-			return BOOLEAN_FALSE;
+			return of(reader.nextBoolean());
 		case NULL:
 			reader.nextNull();
-			return NULL;
+			return ofNull();
 		default:
 			throw new ParseMetadataException(Objects.toString(reader.nextName()), reader);
 		}
+	}
+
+	public static CvObject of(Map<String, CustomValue> map) {
+		Objects.requireNonNull(map, "null map");
+
+		return new ObjectImpl(map);
+	}
+
+	public static CvArray of(List<CustomValue> list) {
+		Objects.requireNonNull(list, "null list");
+
+		return new ArrayImpl(list);
+	}
+
+	public static CustomValue of(String value) {
+		return value != null ? new StringImpl(value) : NULL;
+	}
+
+	public static CustomValue of(Number value) {
+		return value != null ? new NumberImpl(value) : NULL;
+	}
+
+	public static CustomValue of(boolean value) {
+		return value ? BOOLEAN_TRUE : BOOLEAN_FALSE;
+	}
+
+	public static CustomValue ofNull() {
+		return NULL;
 	}
 
 	@Override
@@ -113,6 +137,18 @@ abstract class CustomValueImpl implements CustomValue {
 			return ((NumberImpl) this).value;
 		} else {
 			throw new ClassCastException("can't convert "+getType().name()+" to Number");
+		}
+	}
+
+	@Override
+	public int getAsInteger() {
+		double value;
+		int ret;
+
+		if (this instanceof NumberImpl && (value = ((NumberImpl) this).value.doubleValue()) == (ret = (int) value)) {
+			return ret;
+		} else {
+			throw new ClassCastException("can't convert "+getType().name()+" to int");
 		}
 	}
 
@@ -153,8 +189,18 @@ abstract class CustomValueImpl implements CustomValue {
 		}
 
 		@Override
+		public CustomValue getOrDefault(String key, CustomValue defaultValue) {
+			return entries.getOrDefault(key, defaultValue);
+		}
+
+		@Override
 		public Iterator<Entry<String, CustomValue>> iterator() {
 			return entries.entrySet().iterator();
+		}
+
+		@Override
+		public String toString() {
+			return entries.toString();
 		}
 	}
 
@@ -184,6 +230,11 @@ abstract class CustomValueImpl implements CustomValue {
 		public Iterator<CustomValue> iterator() {
 			return entries.iterator();
 		}
+
+		@Override
+		public String toString() {
+			return entries.toString();
+		}
 	}
 
 	private static final class StringImpl extends CustomValueImpl {
@@ -196,6 +247,11 @@ abstract class CustomValueImpl implements CustomValue {
 		@Override
 		public CvType getType() {
 			return CvType.STRING;
+		}
+
+		@Override
+		public String toString() {
+			return value.toString();
 		}
 	}
 
@@ -210,6 +266,11 @@ abstract class CustomValueImpl implements CustomValue {
 		public CvType getType() {
 			return CvType.NUMBER;
 		}
+
+		@Override
+		public String toString() {
+			return value.toString();
+		}
 	}
 
 	private static final class BooleanImpl extends CustomValueImpl {
@@ -223,12 +284,22 @@ abstract class CustomValueImpl implements CustomValue {
 		public CvType getType() {
 			return CvType.BOOLEAN;
 		}
+
+		@Override
+		public String toString() {
+			return value ? "true" : "false";
+		}
 	}
 
 	private static final class NullImpl extends CustomValueImpl {
 		@Override
 		public CvType getType() {
 			return CvType.NULL;
+		}
+
+		@Override
+		public String toString() {
+			return "null";
 		}
 	}
 }

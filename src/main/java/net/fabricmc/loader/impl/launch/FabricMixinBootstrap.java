@@ -37,6 +37,8 @@ import net.fabricmc.loader.api.metadata.ModDependency;
 import net.fabricmc.loader.api.metadata.ModDependency.Kind;
 import net.fabricmc.loader.api.metadata.version.VersionInterval;
 import net.fabricmc.loader.impl.FabricLoaderImpl;
+import net.fabricmc.loader.impl.LoaderExtensionApiImpl;
+import net.fabricmc.loader.impl.LoaderExtensionApiImpl.MixinConfigEntry;
 import net.fabricmc.loader.impl.ModContainerImpl;
 import net.fabricmc.loader.impl.launch.knot.MixinServiceKnot;
 import net.fabricmc.loader.impl.launch.knot.MixinServiceKnotBootstrap;
@@ -50,7 +52,7 @@ public final class FabricMixinBootstrap {
 
 	private static boolean initialized = false;
 
-	public static void init(EnvType side, FabricLoaderImpl loader) {
+	public static void init(FabricLoaderImpl loader) {
 		if (initialized) {
 			throw new RuntimeException("FabricMixinBootstrap has already been initialized!");
 		}
@@ -87,15 +89,29 @@ public final class FabricMixinBootstrap {
 		Map<String, ModContainerImpl> configToModMap = new HashMap<>();
 
 		for (ModContainerImpl mod : loader.getModsInternal()) {
-			for (String config : mod.getMetadata().getMixinConfigs(side)) {
+			for (String config : mod.getMetadata().getMixinConfigs(loader.getEnvironmentType(), loader.getExpressionFunctions())) {
 				ModContainerImpl prev = configToModMap.putIfAbsent(config, mod);
-				if (prev != null) throw new RuntimeException(String.format("Non-unique Mixin config name %s used by the mods %s and %s", config, prev.getMetadata().getId(), mod.getMetadata().getId()));
+				if (prev != null) throw new RuntimeException(String.format("Non-unique Mixin config name %s used by the mods %s and %s", config, prev.getId(), mod.getId()));
 
 				try {
 					Mixins.addConfiguration(config);
 				} catch (Throwable t) {
 					throw new RuntimeException(String.format("Error parsing or using Mixin config %s for mod %s", config, mod.getMetadata().getId()), t);
 				}
+			}
+		}
+
+		for (MixinConfigEntry entry : LoaderExtensionApiImpl.getMixinConfigs()) {
+			ModContainerImpl mod = loader.getModInternal(entry.modId);
+			if (mod == null) throw new RuntimeException(String.format("Unknown mod %s added through plugin API by %s", entry.modId, entry.extensionModId));
+
+			ModContainerImpl prev = configToModMap.putIfAbsent(entry.location, mod);
+			if (prev != null) throw new RuntimeException(String.format("Non-unique Mixin config name %s used by the mods %s and %s (through plugin %s)", entry.location, prev.getId(), entry.modId, entry.extensionModId));
+
+			try {
+				Mixins.addConfiguration(entry.location);
+			} catch (Throwable t) {
+				throw new RuntimeException(String.format("Error creating Mixin config %s for mod %s through plugin %s", entry.location, entry.modId, entry.extensionModId), t);
 			}
 		}
 
@@ -106,7 +122,7 @@ public final class FabricMixinBootstrap {
 
 		try {
 			IMixinConfig.class.getMethod("decorate", String.class, Object.class);
-			MixinConfigDecorator.apply(configToModMap);
+			MixinConfigDecorator.apply(configToModMap, loader.getEnvironmentType());
 		} catch (NoSuchMethodException e) {
 			Log.info(LogCategory.MIXIN, "Detected old Mixin version without config decoration support");
 		}
@@ -127,18 +143,18 @@ public final class FabricMixinBootstrap {
 			addVersion("0.12.0-", FabricUtil.COMPATIBILITY_0_10_0);
 		}
 
-		static void apply(Map<String, ModContainerImpl> configToModMap) {
+		static void apply(Map<String, ModContainerImpl> configToModMap, EnvType env) {
 			for (Config rawConfig : Mixins.getConfigs()) {
 				ModContainerImpl mod = configToModMap.get(rawConfig.getName());
 				if (mod == null) continue;
 
 				IMixinConfig config = rawConfig.getConfig();
 				config.decorate(FabricUtil.KEY_MOD_ID, mod.getMetadata().getId());
-				config.decorate(FabricUtil.KEY_COMPATIBILITY, getMixinCompat(mod));
+				config.decorate(FabricUtil.KEY_COMPATIBILITY, getMixinCompat(mod, env));
 			}
 		}
 
-		private static int getMixinCompat(ModContainerImpl mod) {
+		private static int getMixinCompat(ModContainerImpl mod, EnvType env) {
 			// infer from loader dependency by determining the least relevant loader version the mod accepts
 			// AND any loader deps
 

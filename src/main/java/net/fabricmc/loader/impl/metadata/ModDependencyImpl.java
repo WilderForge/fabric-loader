@@ -19,24 +19,44 @@ package net.fabricmc.loader.impl.metadata;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.List;
+import java.util.Map;
 
+import net.fabricmc.api.EnvType;
 import net.fabricmc.loader.api.Version;
-import net.fabricmc.loader.api.VersionParsingException;
+import net.fabricmc.loader.api.metadata.ContactInformation;
 import net.fabricmc.loader.api.metadata.ModDependency;
+import net.fabricmc.loader.api.metadata.ModEnvironment;
 import net.fabricmc.loader.api.metadata.version.VersionInterval;
 import net.fabricmc.loader.api.metadata.version.VersionPredicate;
+import net.fabricmc.loader.impl.FabricLoaderImpl;
+import net.fabricmc.loader.impl.util.Expression;
+import net.fabricmc.loader.impl.util.Expression.DynamicFunction;
 
 public final class ModDependencyImpl implements ModDependency {
 	private Kind kind;
 	private final String modId;
-	private final List<String> matcherStringList;
 	private final Collection<VersionPredicate> ranges;
+	private final ModEnvironment environment;
+	private final boolean inferEnvironment;
+	private final Expression originalCondition;
+	private Expression condition;
+	private final String reason;
+	private final ModDependency.Metadata metadata;
+	private final ModDependency.Metadata rootMetadata;
 
-	public ModDependencyImpl(Kind kind, String modId, List<String> matcherStringList) throws VersionParsingException {
+	ModDependencyImpl(Kind kind,
+			String modId, Collection<VersionPredicate> versionOptions,
+			ModEnvironment environment, boolean inferEnvironment, Expression condition, String reason,
+			ModDependency.Metadata metadata, ModDependency.Metadata rootMetadata) {
 		this.kind = kind;
 		this.modId = modId;
-		this.matcherStringList = matcherStringList;
-		this.ranges = VersionPredicate.parse(this.matcherStringList);
+		this.ranges = versionOptions;
+		this.environment = environment;
+		this.inferEnvironment = inferEnvironment;
+		this.originalCondition = this.condition = condition;
+		this.reason = reason;
+		this.metadata = metadata;
+		this.rootMetadata = rootMetadata;
 	}
 
 	@Override
@@ -51,6 +71,42 @@ public final class ModDependencyImpl implements ModDependency {
 	@Override
 	public String getModId() {
 		return this.modId;
+	}
+
+	ModEnvironment getEnvironment() {
+		return environment;
+	}
+
+	boolean appliesInEnvironment(EnvType type) {
+		return environment.matches(type);
+	}
+
+	public boolean isInferEnvironment() {
+		return inferEnvironment;
+	}
+
+	public Expression getOriginalCondition() {
+		return originalCondition;
+	}
+
+	public Expression getCondition() {
+		return condition;
+	}
+
+	public boolean isDisabledByCondition(Map<String, DynamicFunction> expressionFunctions, String modId) {
+		return FabricLoaderImpl.isDisabled(condition, true, expressionFunctions, "dependency", modId);
+	}
+
+	String getReason() {
+		return reason;
+	}
+
+	ModDependency.Metadata getMetadata() {
+		return metadata;
+	}
+
+	ModDependency.Metadata getRootMetadata() {
+		return rootMetadata;
 	}
 
 	@Override
@@ -86,12 +142,16 @@ public final class ModDependencyImpl implements ModDependency {
 		builder.append(this.modId);
 		builder.append(" @ [");
 
-		for (int i = 0; i < matcherStringList.size(); i++) {
-			if (i > 0) {
+		boolean first = true;
+
+		for (VersionPredicate range : ranges) {
+			if (first) {
+				first = false;
+			} else {
 				builder.append(" || ");
 			}
 
-			builder.append(matcherStringList.get(i));
+			builder.append(range);
 		}
 
 		builder.append("]}");
@@ -112,5 +172,44 @@ public final class ModDependencyImpl implements ModDependency {
 		}
 
 		return ret;
+	}
+
+	static final class Metadata implements ModDependency.Metadata {
+		private final String id;
+		private final String name;
+		private final String description;
+		private final ContactInformation contact;
+
+		Metadata(String id, String name, String description, ContactInformation contact) {
+			this.id = id;
+			this.name = name;
+			this.description = description;
+
+			if (contact != null) {
+				this.contact = contact;
+			} else {
+				this.contact = ContactInformation.EMPTY;
+			}
+		}
+
+		@Override
+		public String getId() {
+			return id;
+		}
+
+		@Override
+		public String getName() {
+			return name;
+		}
+
+		@Override
+		public String getDescription() {
+			return description;
+		}
+
+		@Override
+		public ContactInformation getContact() {
+			return contact;
+		}
 	}
 }

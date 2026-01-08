@@ -62,21 +62,26 @@ import net.fabricmc.loader.impl.metadata.NestedJarEntry;
 import net.fabricmc.loader.impl.metadata.ParseMetadataException;
 import net.fabricmc.loader.impl.metadata.VersionOverrides;
 import net.fabricmc.loader.impl.util.ExceptionUtil;
+import net.fabricmc.loader.impl.util.Expression.DynamicFunction;
 import net.fabricmc.loader.impl.util.LoaderUtil;
 import net.fabricmc.loader.impl.util.SystemProperties;
 import net.fabricmc.loader.impl.util.log.Log;
 import net.fabricmc.loader.impl.util.log.LogCategory;
 
 public final class ModDiscoverer {
+	private final EnvType envType;
+	private final Map<String, DynamicFunction> expressionFunctions;
 	private final VersionOverrides versionOverrides;
 	private final DependencyOverrides depOverrides;
 	private final List<ModCandidateFinder> candidateFinders = new ArrayList<>();
-	private final EnvType envType = FabricLoaderImpl.INSTANCE.getEnvironmentType();
 	private final Map<Long, ModScanTask> jijDedupMap = new ConcurrentHashMap<>(); // avoids reading the same jar twice
 	private final List<NestedModInitData> nestedModInitDatas = Collections.synchronizedList(new ArrayList<>()); // breaks potential cycles from deduplication
 	private final List<Path> nonFabricMods = Collections.synchronizedList(new ArrayList<>());
 
-	public ModDiscoverer(VersionOverrides versionOverrides, DependencyOverrides depOverrides) {
+	public ModDiscoverer(EnvType env, Map<String, DynamicFunction> expressionFunctions,
+			VersionOverrides versionOverrides, DependencyOverrides depOverrides) {
+		this.envType = env;
+		this.expressionFunctions = expressionFunctions;
 		this.versionOverrides = versionOverrides;
 		this.depOverrides = depOverrides;
 	}
@@ -170,6 +175,8 @@ public final class ModDiscoverer {
 					}
 				}
 			}
+
+			nestedModInitDatas.clear();
 		} catch (TimeoutException e) {
 			throw new FormattedException("Mod discovery took too long!",
 					"Analyzing the mod folder contents took longer than %d seconds. This may be caused by unusually slow hardware, pathological antivirus interference or other issues. The timeout can be changed with the system property %s (-D%<s=<desired timeout in seconds>).",
@@ -191,7 +198,7 @@ public final class ModDiscoverer {
 		Queue<ModCandidateImpl> queue = new ArrayDeque<>(candidates);
 		ModCandidateImpl mod;
 
-		while ((mod = queue.poll()) != null) {
+		while ((mod = queue.poll()) != null) { // TODO: merge this with similar logic in scan and similar needs in net.fabricmc.loader.impl.LoaderPluginApiImpl.createMod(List<Path>, ModMetadata, Collection<ModCandidate>)
 			if (mod.getMetadata().loadsInEnvironment(envType)) {
 				if (disabledModIds.contains(mod.getId())) {
 					Log.info(LogCategory.DISCOVERY, "Skipping disabled mod %s", mod.getId());
@@ -200,13 +207,14 @@ public final class ModDiscoverer {
 
 				if (!ret.add(mod)) continue;
 
-				for (ModCandidateImpl child : mod.getNestedMods()) {
+				for (ModCandidateImpl child : mod.getContainedMods()) {
 					if (child.addParent(mod)) {
 						queue.add(child);
 					}
 				}
 			} else {
 				envDisabledModsOut.computeIfAbsent(mod.getId(), ignore -> Collections.newSetFromMap(new IdentityHashMap<>())).add(mod);
+				// TODO: add now-unlinked child mods to envDisabledModsOut as well
 			}
 		}
 
@@ -244,6 +252,46 @@ public final class ModDiscoverer {
 		BuiltinMod builtinMod = new BuiltinMod(Collections.singletonList(Paths.get(System.getProperty("java.home"))), metadata);
 
 		return ModCandidateImpl.createBuiltin(builtinMod, versionOverrides, depOverrides);
+	}
+
+	public ModCandidateImpl scan(List<Path> paths, boolean requiresRemap) {
+		ModCandidateImpl ret = new ModScanTask(paths, requiresRemap).compute();
+
+		if (ret == null) { // no mod found
+			assert nestedModInitDatas.isEmpty();
+
+			return null;
+		}
+
+		for (NestedModInitData data : nestedModInitDatas) {
+			for (Future<ModCandidateImpl> future : data.futures) {
+				try {
+					ModCandidateImpl candidate = future.get();
+					if (candidate != null) data.target.add(candidate);
+				} catch (ExecutionException | InterruptedException e) {
+					throw ExceptionUtil.wrap(e);
+				}
+			}
+		}
+
+		nestedModInitDatas.clear();
+
+		if (!ret.getMetadata().loadsInEnvironment(envType)) return null;
+
+		Queue<ModCandidateImpl> queue = new ArrayDeque<>();
+		ModCandidateImpl mod = ret;
+
+		do {
+			if (mod.getMetadata().loadsInEnvironment(envType)) {
+				for (ModCandidateImpl child : mod.getContainedMods()) {
+					if (child.addParent(mod)) {
+						queue.add(child);
+					}
+				}
+			}
+		} while ((mod = queue.poll()) != null);
+
+		return ret;
 	}
 
 	@SuppressWarnings("serial")
@@ -507,7 +555,10 @@ public final class ModDiscoverer {
 		}
 
 		private LoaderModMetadata parseMetadata(InputStream is, String localPath) throws ParseMetadataException {
-			return ModMetadataParser.parseMetadata(is, localPath, parentPaths, versionOverrides, depOverrides, FabricLoaderImpl.INSTANCE.isDevelopmentEnvironment());
+			LoaderModMetadata ret = ModMetadataParser.parseMetadata(is, localPath, parentPaths, versionOverrides, depOverrides, FabricLoaderImpl.INSTANCE.isDevelopmentEnvironment());
+			ret.applyEnvironment(envType, expressionFunctions);
+
+			return ret;
 		}
 	}
 
