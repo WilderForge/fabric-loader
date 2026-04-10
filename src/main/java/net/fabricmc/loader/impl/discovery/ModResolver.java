@@ -40,9 +40,9 @@ import net.fabricmc.loader.impl.util.log.Log;
 import net.fabricmc.loader.impl.util.log.LogCategory;
 
 public class ModResolver {
-	public static List<ModCandidateImpl> resolve(Collection<ModCandidateImpl> candidates, EnvType envType, Map<String, Set<ModCandidateImpl>> envDisabledMods) throws ModResolutionException {
+	public static ModResolutionInfo resolve(Collection<ModCandidateImpl> candidates, EnvType envType, Map<String, Set<ModCandidateImpl>> envDisabledMods) throws ModResolutionException {
 		long startTime = System.nanoTime();
-		List<ModCandidateImpl> result = findCompatibleSet(candidates, envType, envDisabledMods);
+		ModResolutionInfo result = findCompatibleSet(candidates, envType, envDisabledMods);
 
 		long endTime = System.nanoTime();
 		Log.debug(LogCategory.RESOLUTION, "Mod resolution time: %.1f ms", (endTime - startTime) * 1e-6);
@@ -50,7 +50,7 @@ public class ModResolver {
 		return result;
 	}
 
-	private static List<ModCandidateImpl> findCompatibleSet(Collection<ModCandidateImpl> candidates, EnvType envType, Map<String, Set<ModCandidateImpl>> envDisabledMods) throws ModResolutionException {
+	private static ModResolutionInfo findCompatibleSet(Collection<ModCandidateImpl> candidates, EnvType envType, Map<String, Set<ModCandidateImpl>> envDisabledMods) throws ModResolutionException {
 		// sort all mods by priority and group by id
 
 		List<ModCandidateImpl> allModsSorted = new ArrayList<>(candidates);
@@ -81,119 +81,125 @@ public class ModResolver {
 			}
 		}
 
+		Map<String, ModCandidateImpl> selectedMods = new HashMap<>(allModsSorted.size());
+		List<ModCandidateImpl> uniqueSelectedMods = new ArrayList<>(allModsSorted.size());
+
 		// preselect mods, check for builtin mod collisions
 
 		List<ModCandidateImpl> preselectedMods = new ArrayList<>();
 
-		for (List<ModCandidateImpl> mods : modsById.values()) {
-			ModCandidateImpl builtinMod = null;
-
-			for (ModCandidateImpl mod : mods) {
-				if (mod.isBuiltin()) {
-					builtinMod = mod;
-					break;
-				}
-			}
-
-			if (builtinMod == null) continue;
-
-			if (mods.size() > 1) {
-				mods.remove(builtinMod);
-				throw new ModResolutionException("Mods share ID with builtin mod %s: %s", builtinMod, mods);
-			}
-
-			preselectedMods.add(builtinMod);
-		}
-
-		Map<String, ModCandidateImpl> selectedMods = new HashMap<>(allModsSorted.size());
-		List<ModCandidateImpl> uniqueSelectedMods = new ArrayList<>(allModsSorted.size());
-
-		for (ModCandidateImpl mod : preselectedMods) {
-			preselectMod(mod, allModsSorted, modsById, selectedMods, uniqueSelectedMods);
-		}
-
-		// solve
-
-		ModSolver.Result result;
+		ModResolutionException exception = null;
 
 		try {
-			result = ModSolver.solve(allModsSorted, modsById,
-					selectedMods, uniqueSelectedMods);
-		} catch (ContradictionException | TimeoutException e) {
-			throw new ModResolutionException("Solving failed", e);
-		}
+			for (List<ModCandidateImpl> mods : modsById.values()) {
+				ModCandidateImpl builtinMod = null;
 
-		if (!result.success) {
-			Log.warn(LogCategory.RESOLUTION, "Mod resolution failed");
-			Log.info(LogCategory.RESOLUTION, "Immediate reason: %s%n", result.immediateReason);
-			Log.info(LogCategory.RESOLUTION, "Reason: %s%n", result.reason);
-			if (!envDisabledMods.isEmpty()) Log.info(LogCategory.RESOLUTION, "%s environment disabled: %s%n", envType.name(), envDisabledMods.keySet());
+				for (ModCandidateImpl mod : mods) {
+					if (mod.isBuiltin()) {
+						builtinMod = mod;
+						break;
+					}
+				}
 
-			if (result.fix == null) {
-				Log.info(LogCategory.RESOLUTION, "No fix?");
-			} else {
-				Log.info(LogCategory.RESOLUTION, "Fix: add %s, remove %s, replace [%s]%n",
-						result.fix.modsToAdd,
-						result.fix.modsToRemove,
-						result.fix.modReplacements.entrySet().stream().map(e -> String.format("%s -> %s", e.getValue(), e.getKey())).collect(Collectors.joining(", ")));
+				if (builtinMod == null) continue;
 
-				for (Collection<ModCandidateImpl> mods : envDisabledMods.values()) {
-					for (ModCandidateImpl m : mods) {
-						result.fix.inactiveMods.put(m, InactiveReason.WRONG_ENVIRONMENT);
+				if (mods.size() > 1) {
+					mods.remove(builtinMod);
+					throw new ModResolutionException("Mods share ID with builtin mod %s: %s", builtinMod, mods);
+				}
+
+				preselectedMods.add(builtinMod);
+			}
+
+			for (ModCandidateImpl mod : preselectedMods) {
+				preselectMod(mod, allModsSorted, modsById, selectedMods, uniqueSelectedMods);
+			}
+
+			// solve
+
+			ModSolver.Result result;
+
+			try {
+				result = ModSolver.solve(allModsSorted, modsById,
+						selectedMods, uniqueSelectedMods);
+			} catch (ContradictionException | TimeoutException e) {
+				throw new ModResolutionException("Solving failed", e);
+			}
+
+			if (!result.success) {
+				Log.warn(LogCategory.RESOLUTION, "Mod resolution failed");
+				Log.info(LogCategory.RESOLUTION, "Immediate reason: %s%n", result.immediateReason);
+				Log.info(LogCategory.RESOLUTION, "Reason: %s%n", result.reason);
+				if (!envDisabledMods.isEmpty()) Log.info(LogCategory.RESOLUTION, "%s environment disabled: %s%n", envType.name(), envDisabledMods.keySet());
+
+				if (result.fix == null) {
+					Log.info(LogCategory.RESOLUTION, "No fix?");
+				} else {
+					Log.info(LogCategory.RESOLUTION, "Fix: add %s, remove %s, replace [%s]%n",
+							result.fix.modsToAdd,
+							result.fix.modsToRemove,
+							result.fix.modReplacements.entrySet().stream().map(e -> String.format("%s -> %s", e.getValue(), e.getKey())).collect(Collectors.joining(", ")));
+
+					for (Collection<ModCandidateImpl> mods : envDisabledMods.values()) {
+						for (ModCandidateImpl m : mods) {
+							result.fix.inactiveMods.put(m, InactiveReason.WRONG_ENVIRONMENT);
+						}
+					}
+				}
+
+				throw new ModResolutionException("Some of your mods are incompatible with the game or each other!%s",
+						ResultAnalyzer.gatherErrors(result, selectedMods, modsById, envDisabledMods, envType));
+			}
+
+			uniqueSelectedMods.sort(Comparator.comparing(ModCandidateImpl::getId));
+
+			// clear cached data and inbound refs for unused mods, set minNestLevel for used non-root mods to max, queue root mods
+
+			Queue<ModCandidateImpl> queue = new ArrayDeque<>();
+
+			for (ModCandidateImpl mod : allModsSorted) {
+				if (selectedMods.get(mod.getId()) == mod) { // mod is selected
+					if (!mod.resetMinNestLevel()) { // -> is root
+						queue.add(mod);
+					}
+				} else {
+					mod.clearCachedData();
+
+					for (ModCandidateImpl m : mod.getNestedMods()) {
+						m.getParentMods().remove(mod);
+					}
+
+					for (ModCandidateImpl m : mod.getParentMods()) {
+						m.getNestedMods().remove(mod);
 					}
 				}
 			}
 
-			throw new ModResolutionException("Some of your mods are incompatible with the game or each other!%s",
-					ResultAnalyzer.gatherErrors(result, selectedMods, modsById, envDisabledMods, envType));
-		}
+			// recompute minNestLevel (may have changed due to parent associations having been dropped by the above step)
 
-		uniqueSelectedMods.sort(Comparator.comparing(ModCandidateImpl::getId));
+			{
+				ModCandidateImpl mod;
 
-		// clear cached data and inbound refs for unused mods, set minNestLevel for used non-root mods to max, queue root mods
-
-		Queue<ModCandidateImpl> queue = new ArrayDeque<>();
-
-		for (ModCandidateImpl mod : allModsSorted) {
-			if (selectedMods.get(mod.getId()) == mod) { // mod is selected
-				if (!mod.resetMinNestLevel()) { // -> is root
-					queue.add(mod);
-				}
-			} else {
-				mod.clearCachedData();
-
-				for (ModCandidateImpl m : mod.getNestedMods()) {
-					m.getParentMods().remove(mod);
-				}
-
-				for (ModCandidateImpl m : mod.getParentMods()) {
-					m.getNestedMods().remove(mod);
-				}
-			}
-		}
-
-		// recompute minNestLevel (may have changed due to parent associations having been dropped by the above step)
-
-		{
-			ModCandidateImpl mod;
-
-			while ((mod = queue.poll()) != null) {
-				for (ModCandidateImpl child : mod.getNestedMods()) {
-					if (child.updateMinNestLevel(mod)) {
-						queue.add(child);
+				while ((mod = queue.poll()) != null) {
+					for (ModCandidateImpl child : mod.getNestedMods()) {
+						if (child.updateMinNestLevel(mod)) {
+							queue.add(child);
+						}
 					}
 				}
 			}
+
+			String warnings = ResultAnalyzer.gatherWarnings(uniqueSelectedMods, selectedMods,
+					envDisabledMods, envType);
+
+			if (warnings != null) {
+				Log.warn(LogCategory.RESOLUTION, "Warnings were found!%s", warnings);
+			}
+		} catch (ModResolutionException e) {
+			exception = e;
 		}
 
-		String warnings = ResultAnalyzer.gatherWarnings(uniqueSelectedMods, selectedMods,
-				envDisabledMods, envType);
-
-		if (warnings != null) {
-			Log.warn(LogCategory.RESOLUTION, "Warnings were found!%s", warnings);
-		}
-
-		return uniqueSelectedMods;
+		return new ModResolutionInfo(uniqueSelectedMods, exception);
 	}
 
 	static void preselectMod(ModCandidateImpl mod, List<ModCandidateImpl> allModsSorted, Map<String, List<ModCandidateImpl>> modsById,
