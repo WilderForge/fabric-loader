@@ -5,7 +5,7 @@
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- *	 http://www.apache.org/licenses/LICENSE-2.0
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -92,7 +92,6 @@ final class KnotClassLoader extends AbstractSecureClassLoader implements ClassLo
 	@Override
 	public Enumeration<URL> findResources(String name) throws IOException {
 		Objects.requireNonNull(name);
-		
 		return urlLoader.findResources(name);
 	}
 
@@ -174,25 +173,27 @@ final class KnotClassLoader extends AbstractSecureClassLoader implements ClassLo
 	public void resolveClassFwd(Class<?> cls) {
 		super.resolveClass(cls);
 	}
-	
+
 	private static ClassLoader obtainClassloader(GameProvider provider) { //cannot use intersecting return type: https://bugs.openjdk.org/browse/JDK-8380420
 		URLLoader ret = provider.getProviderCL();
-		if(ret == null) {
+
+		if (ret == null) {
 			ret = new DynamicURLClassLoader(new URL[0]);
 		}
+
 		return (ClassLoader) ret;
 	}
 
 	static {
 		registerAsParallelCapable();
 	}
-	
+
 	private static final class MultiEnumeration<T> implements Enumeration<T> {
 		private final Enumeration<T>[] enumerations;
 		private int index = 0;
 
 		@SafeVarargs
-		public MultiEnumeration(Enumeration<T>... enumerations) {
+		MultiEnumeration(Enumeration<T>... enumerations) {
 			this.enumerations = enumerations;
 			advance();
 		}
@@ -211,11 +212,14 @@ final class KnotClassLoader extends AbstractSecureClassLoader implements ClassLo
 		@Override
 		public T nextElement() {
 			if (!hasMoreElements()) throw new NoSuchElementException();
+
 			T element = enumerations[index].nextElement();
+
 			if (!enumerations[index].hasMoreElements()) {
 				index++;
 				advance();
 			}
+
 			return element;
 		}
 	}
