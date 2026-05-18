@@ -24,8 +24,6 @@ import static net.fabricmc.loader.impl.lib.gson.JsonScope.NONEMPTY_ARRAY;
 import static net.fabricmc.loader.impl.lib.gson.JsonScope.NONEMPTY_DOCUMENT;
 import static net.fabricmc.loader.impl.lib.gson.JsonScope.NONEMPTY_OBJECT;
 
-import com.google.gson.Gson;
-import com.google.gson.GsonBuilder;
 import java.io.Closeable;
 import java.io.Flushable;
 import java.io.IOException;

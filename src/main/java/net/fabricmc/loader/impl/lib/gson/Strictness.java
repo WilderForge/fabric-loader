@@ -1,8 +1,5 @@
 package net.fabricmc.loader.impl.lib.gson;
 
-import com.google.gson.stream.JsonReader;
-import com.google.gson.stream.JsonWriter;
-
 /**
  * Modes that indicate how strictly a JSON {@linkplain JsonReader reader} or {@linkplain JsonWriter
  * writer} follows the syntax laid out in the <a href="https://www.ietf.org/rfc/rfc8259.txt">RFC

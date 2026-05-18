@@ -16,7 +16,6 @@
 
 package net.fabricmc.loader.impl.lib.gson;
 
-import com.google.gson.stream.JsonWriter;
 import java.util.Objects;
 
 /**
