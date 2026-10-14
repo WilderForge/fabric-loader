@@ -80,8 +80,7 @@ public final class FabricLoaderImpl extends net.fabricmc.loader.FabricLoader {
 
 	public static final int ASM_VERSION = Opcodes.ASM9;
 
-	public static final String VERSION = "0.19.1+WilderForge.0.5.0";
-
+	public static final String VERSION = "0.19.5+WilderForge.0.6.0";
 	public static final String MOD_ID = "fabricloader";
 
 	public static final String CACHE_DIR_NAME = ".fabric"; // relative to game dir
@@ -107,6 +106,7 @@ public final class FabricLoaderImpl extends net.fabricmc.loader.FabricLoader {
 	private GameProvider provider;
 	private Path gameDir;
 	private Path configDir;
+	private DependencyOverrides dependencyOverrides;
 
 	private FabricLoaderImpl() { }
 
@@ -130,6 +130,10 @@ public final class FabricLoaderImpl extends net.fabricmc.loader.FabricLoader {
 
 	public GameProvider tryGetGameProvider() {
 		return provider;
+	}
+
+	public DependencyOverrides getDependencyOverrides() {
+		return dependencyOverrides;
 	}
 
 	public void setGameProvider(GameProvider provider) {
@@ -214,7 +218,7 @@ public final class FabricLoaderImpl extends net.fabricmc.loader.FabricLoader {
 	private void setup() throws ModResolutionException {
 		boolean remapRegularMods = isDevelopmentEnvironment();
 		VersionOverrides versionOverrides = new VersionOverrides();
-		DependencyOverrides depOverrides = new DependencyOverrides(configDir);
+		DependencyOverrides depOverrides = dependencyOverrides = new DependencyOverrides(configDir);
 
 		// discover mods
 
@@ -285,7 +289,11 @@ public final class FabricLoaderImpl extends net.fabricmc.loader.FabricLoader {
 
 		if (remapRegularMods) {
 			if (System.getProperty(SystemProperties.REMAP_CLASSPATH_FILE) == null) {
-				Log.warn(LogCategory.MOD_REMAP, "Runtime mod remapping disabled due to no fabric.remapClasspathFile being specified. You may need to update loom.");
+				MappingConfiguration config = FabricLauncherBase.getLauncher().getMappingConfiguration();
+
+				if (!config.getRuntimeNamespace().equals(config.getDefaultModDistributionNamespace())) {
+					Log.warn(LogCategory.MOD_REMAP, "Runtime mod remapping disabled due to no fabric.remapClasspathFile being specified. You may need to update loom.");
+				}
 			} else {
 				RuntimeModRemapper.remap(modCandidates, cacheDir.resolve(TMP_DIR_NAME), outputdir);
 			}
