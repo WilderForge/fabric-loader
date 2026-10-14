@@ -294,7 +294,13 @@ public class ModResolverTest {
 	}
 
 	private static Solution solveMods(List<ModCandidateImpl> modCandidates) throws ModResolutionException {
-		modCandidates = ModResolver.resolve(modCandidates, EnvType.CLIENT, Collections.emptyMap());
+		ModResolutionInfo resolutionInfo = ModResolver.resolve(modCandidates, EnvType.CLIENT, Collections.emptyMap());
+
+		if (!resolutionInfo.launchable()) {
+			throw resolutionInfo.getException();
+		}
+
+		modCandidates = resolutionInfo.getResolvedMods();
 
 		// See net.fabricmc.loader.impl.FabricLoaderImpl#setup
 		List<ModContainerImpl> modContainers = modCandidates.stream()
