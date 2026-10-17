@@ -79,7 +79,7 @@ public class ModDiscoveryInfo {
 			writer.name("exception");
 			serializeThrowable(exception, writer);
 			writer.endObject();
-			
+
 			return s.toString();
 		} catch (IOException e) {
 			throw new UncheckedIOException(e);
